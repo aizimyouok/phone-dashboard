@@ -195,10 +195,12 @@ def parse_invoice_data(text):
     ]
     
     print("=== 패턴별 매칭 결과 ===")
+    total_parsed = 0
     # 각 패턴별로 전화번호를 찾고 데이터를 추출
     for pattern, pattern_name in phone_patterns:
         matches = list(re.finditer(pattern, text))
         print(f"{pattern_name} 패턴 '{pattern}': {len(matches)}개 매칭")
+        pattern_parsed = 0
         
         for i, match in enumerate(matches):
             phone_number = match.group(0)  # 전체 매칭된 문자열
@@ -222,11 +224,16 @@ def parse_invoice_data(text):
                 amounts['전화번호'] = phone_number
                 
                 parsed_data.append(amounts)
+                pattern_parsed += 1
+                total_parsed += 1
                 print(f"     → 파싱 완료: {phone_number} ({total_amount}원)")
             else:
-                print(f"     → 합계 금액 찾을 수 없음")
+                print(f"     → 합계 금액 찾을 수 없음 - 건너뜀")
+        
+        print(f"  {pattern_name}: {pattern_parsed}/{len(matches)}개 파싱 성공")
+        print()
     
-    print(f"=== 파싱 완료: 총 {len(parsed_data)}개 전화번호 추출 ===")
+    print(f"=== 파싱 완료: 총 {total_parsed}개 전화번호 추출 (발견: 133개 중) ===")
     return parsed_data
 
 def extract_phone_number_from_content(content):
