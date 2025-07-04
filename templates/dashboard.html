@@ -561,6 +561,13 @@
                 console.log('070번호:', result.debug_info.pattern_matches?.['070번호'] || 0, '개');
                 console.log('02번호:', result.debug_info.pattern_matches?.['02번호'] || 0, '개');
                 console.log('080번호:', result.debug_info.pattern_matches?.['080번호'] || 0, '개');
+                console.log('=== 실제 매칭된 전화번호 샘플 ===');
+                if (result.debug_info.sample_matches) {
+                    console.log('전국대표번호 샘플:', result.debug_info.sample_matches.전국대표번호);
+                    console.log('070번호 샘플:', result.debug_info.sample_matches['070번호']);
+                    console.log('02번호 샘플:', result.debug_info.sample_matches['02번호']);
+                    console.log('080번호 샘플:', result.debug_info.sample_matches['080번호']);
+                }
                 console.log('PDF 텍스트 미리보기 (처음 2000문자):');
                 console.log(result.debug_info.text_preview);
             }
