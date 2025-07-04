@@ -33,66 +33,66 @@ class PhoneBillingDashboard:
             
             # 환경변수 확인 로그
             credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
-            print(f"🔍 환경변수 GOOGLE_APPLICATION_CREDENTIALS_JSON 존재: {bool(credentials_json)}")
+            print(f"환경변수 GOOGLE_APPLICATION_CREDENTIALS_JSON 존재: {bool(credentials_json)}")
             if credentials_json:
-                print(f"🔍 환경변수 길이: {len(credentials_json)} 문자")
+                print(f"환경변수 길이: {len(credentials_json)} 문자")
             
             if credentials_json:
                 try:
                     # JSON 문자열을 딕셔너리로 변환
                     credentials_dict = json.loads(credentials_json)
-                    print(f"✅ JSON 파싱 성공, project_id: {credentials_dict.get('project_id', 'N/A')}")
-                    print(f"✅ client_email: {credentials_dict.get('client_email', 'N/A')}")
+                    print(f"JSON 파싱 성공, project_id: {credentials_dict.get('project_id', 'N/A')}")
+                    print(f"client_email: {credentials_dict.get('client_email', 'N/A')}")
                     creds = Credentials.from_service_account_info(credentials_dict, scopes=scope)
-                    print("✅ 환경변수에서 구글 크리덴셜 로드 성공")
+                    print("환경변수에서 구글 크리덴셜 로드 성공")
                 except json.JSONDecodeError as je:
-                    print(f"❌ JSON 파싱 실패: {je}")
-                    print(f"🔍 JSON 앞부분 미리보기: {credentials_json[:100]}...")
+                    print(f"JSON 파싱 실패: {je}")
+                    print(f"JSON 앞부분 미리보기: {credentials_json[:100]}...")
                     raise
                 except Exception as ce:
-                    print(f"❌ 크리덴셜 로드 실패: {ce}")
+                    print(f"크리덴셜 로드 실패: {ce}")
                     raise
             else:
                 # 로컬 파일 사용 (fallback)
-                print("⚠️ 환경변수가 없음, 로컬 파일 사용 시도")
+                print("환경변수가 없음, 로컬 파일 사용 시도")
                 if os.path.exists(KEY_FILE_PATH):
                     creds = Credentials.from_service_account_file(KEY_FILE_PATH, scopes=scope)
-                    print("✅ 로컬 파일에서 구글 크리덴셜 로드 성공")
+                    print("로컬 파일에서 구글 크리덴셜 로드 성공")
                 else:
-                    print(f"❌ 로컬 파일 없음: {KEY_FILE_PATH}")
+                    print(f"로컬 파일 없음: {KEY_FILE_PATH}")
                     raise FileNotFoundError("구글 인증 파일을 찾을 수 없습니다")
             
             # 구글 시트 연결
-            print("🔄 구글 시트 연결 시도...")
+            print("구글 시트 연결 시도...")
             self.gc = gspread.authorize(creds)
-            print(f"🔄 스프레드시트 열기 시도: '{SPREADSHEET_NAME}'")
+            print(f"스프레드시트 열기 시도: '{SPREADSHEET_NAME}'")
             self.spreadsheet = self.gc.open(SPREADSHEET_NAME)
-            print("✅ 스프레드시트 열기 성공")
+            print("스프레드시트 열기 성공")
             
             # 워크시트 연결 테스트
-            print("🔄 워크시트 연결 테스트...")
+            print("워크시트 연결 테스트...")
             worksheets = self.spreadsheet.worksheets()
             worksheet_titles = [ws.title for ws in worksheets]
-            print(f"📋 사용 가능한 워크시트: {worksheet_titles}")
+            print(f"사용 가능한 워크시트: {worksheet_titles}")
             
             self.master_ws = self.spreadsheet.worksheet("전화번호 마스터")
-            print("✅ 마스터 워크시트 연결 성공")
+            print("마스터 워크시트 연결 성공")
             
             self.data_ws = self.spreadsheet.worksheet("청구내역 원본")
-            print("✅ 데이터 워크시트 연결 성공")
+            print("데이터 워크시트 연결 성공")
             
             # 실제 데이터 읽기 테스트
-            print("🔄 데이터 읽기 테스트...")
+            print("데이터 읽기 테스트...")
             test_records = self.data_ws.get_all_records()
-            print(f"📊 청구내역 데이터 개수: {len(test_records)}개")
+            print(f"청구내역 데이터 개수: {len(test_records)}개")
             
             master_records = self.master_ws.get_all_records()
-            print(f"📋 마스터 데이터 개수: {len(master_records)}개")
+            print(f"마스터 데이터 개수: {len(master_records)}개")
             
-            print("🎉 구글 시트 연결 및 데이터 읽기 완료!")
+            print("구글 시트 연결 및 데이터 읽기 완료!")
             
         except Exception as e:
-            print(f"🚨 구글 시트 연결 실패: {type(e).__name__}: {e}")
+            print(f"구글 시트 연결 실패: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             self.gc = None
@@ -635,7 +635,7 @@ def process_pdf(file_path):
         billing_month = get_billing_month(pdf_text)
         
         # 디버깅 정보 출력
-        print(f"📋 PDF 파싱 결과:")
+        print(f"PDF 파싱 결과:")
         print(f"   청구월: {billing_month}")
         print(f"   추출된 회선 수: {len(invoice_data)}")
         
