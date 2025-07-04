@@ -94,12 +94,12 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
             unmatched_count += 1
             print(f"  실패 {pdf_phone_number} → 미배정 (매칭 실패)")
 
-        # column_order 순서에 맞게 한 줄의 데이터를 리스트로 만듭니다. (사용자 열 추가)
+        # column_order 순서에 맞게 한 줄의 데이터를 리스트로 만듭니다. (전화번호, 사용자 순서)
         row = [
             billing_month,
             branch_name,
-            user_name,  # 사용자 열 추가!
-            full_phone_number, # 마스터에서 찾은 전체 번호로 기록
+            full_phone_number,  # C열: 전화번호
+            user_name,          # D열: 사용자
             data.get('기본료', 0),
             data.get('시내통화료', 0),
             data.get('이동통화료', 0),
@@ -177,87 +177,97 @@ def get_billing_month(text):
     return "날짜모름"
 
 def parse_invoice_data(text):
-    """PDF 텍스트에서 청구 데이터를 파싱합니다. (개선된 버전)"""
-    # 서비스 구분별로 블록을 나누기 (더 정확한 패턴)
-    service_blocks = []
-    
-    # 다양한 서비스 구분 패턴들
-    service_patterns = [
-        r'유선전화\s*\(TL\)전국대표번호\(mig\)',
-        r'유선전화\s*\(TL\)소호',
-        r'유선전화\s*\(TL\)링크기본형\(가상\)',
-        r'유선전화\s*\(TL\)링크기본형\(실선\)',
-        r'유선전화\s*\(TL\)소호\(가상중계실\)',
-        r'유선전화\s*\(TL\)착신과금\(mig\)',
-        r'유선전화\s*\(TL\)웹팩스',
-        r'유선전화\s*(?!\(TL\))',  # 일반 유선전화
-    ]
-    
-    # 전체 텍스트를 서비스 블록으로 나누기
-    split_pattern = '|'.join(service_patterns)
-    blocks = re.split(f'({split_pattern})', text)
-    
+    """PDF 텍스트에서 청구 데이터를 파싱합니다. (전면 개선된 버전)"""
     parsed_data = []
     
-    # 블록들을 순회하면서 처리
-    for i in range(1, len(blocks), 2):  # 서비스명과 데이터가 번갈아 나타남
-        if i + 1 < len(blocks):
-            service_type = blocks[i].strip()
-            block_content = blocks[i + 1]
+    # 개별 전화번호 항목들을 "합계 XXX원" 기준으로 분리
+    # 각 전화번호는 "합계 숫자원"으로 끝남
+    entries = re.split(r'합계\s+([\d,]+)\s*원', text)
+    
+    # entries[0]은 헤더, 그 이후로 (내용, 합계금액, 내용, 합계금액, ...) 순서
+    for i in range(1, len(entries), 2):
+        if i + 1 < len(entries):
+            final_amount_str = entries[i].replace(',', '')
+            content = entries[i + 1] if i + 1 < len(entries) else ''
             
-            # 각 블록에서 개별 전화번호 항목들 추출
-            phone_entries = extract_phone_entries_from_block(service_type, block_content)
-            parsed_data.extend(phone_entries)
+            # 전화번호 추출 (개선된 패턴)
+            phone_number = extract_phone_number_from_content(content + f" 합계 {entries[i]}원")
+            
+            if phone_number:
+                # 금액 정보 추출
+                amounts = extract_amounts_from_content(content + f" 합계 {entries[i]}원")
+                amounts['최종합계'] = int(final_amount_str) if final_amount_str.isdigit() else 0
+                amounts['전화번호'] = phone_number
+                
+                parsed_data.append(amounts)
+                print(f"추출된 전화번호: {phone_number}, 최종합계: {amounts['최종합계']}원")
     
     return parsed_data
 
-def extract_phone_entries_from_block(service_type, block_content):
-    """서비스 블록 내에서 개별 전화번호 항목들을 추출"""
-    entries = []
-    
-    # 전화번호별로 데이터를 나누기 (합계 기준으로 분리)
-    # "합계 XXXXX원" 패턴으로 각 전화번호의 끝을 구분
-    phone_sections = re.split(r'합계\s+[\d,]+\s*원', block_content)
-    
-    for section in phone_sections[:-1]:  # 마지막 섹션은 빈 내용이므로 제외
-        entry = extract_single_phone_data(service_type, section)
-        if entry:
-            entries.append(entry)
-    
-    return entries
-
-def extract_single_phone_data(service_type, section):
-    """개별 전화번호 섹션에서 데이터 추출"""
-    # 전화번호 패턴 매칭 (실제 PDF 형태에 맞게 개선)
-    phone_number = None
+def extract_phone_number_from_content(content):
+    """텍스트에서 전화번호를 추출합니다 (개선된 패턴)"""
+    # 다양한 전화번호 패턴들 (PDF 실제 형태에 맞게)
     phone_patterns = [
         # 전국대표번호: **99-2593, **00-1631
-        (r'\*\*(\d{2}-\d{4})', 'XXXX-{}'),
+        r'\*\*(\d{2}-\d{4})',
         # 070 번호: 070)**03-2573
-        (r'070\)\*\*(\d{2}-\d{4})', '070-XX{}'),
+        r'070\)\*\*(\d{2}-\d{4})',
         # 02 번호: 02)**35-6493  
-        (r'02\)\*\*(\d{2}-\d{4})', '02-XX{}'),
+        r'02\)\*\*(\d{2}-\d{4})',
         # 080 번호: 080)**0-7100
-        (r'080\)\*\*(\d{1}-\d{4})', '080-XX{}'),
+        r'080\)\*\*(\d{1}-\d{4})',
         # 일반 지역번호: 031)**12-3456 등
-        (r'(\d{2,3})\)\*\*(\d{2}-\d{4})', '{}-XX{}'),
-        # 4자리 번호: 1588)**12-3456 등
-        (r'(\d{4})\)\*\*(\d{1,2}-\d{4})', '{}-XX{}'),
+        r'(\d{2,3})\)\*\*(\d{2}-\d{4})',
+        # 4자리 번호: 1588)**12-3456 등  
+        r'(\d{4})\)\*\*(\d{1,2}-\d{4})',
+        # 단순한 번호들 (백업용)
+        r'(\d{2,4})-(\d{4})',
     ]
     
-    for pattern, format_str in phone_patterns:
-        match = re.search(pattern, section)
+    for pattern in phone_patterns:
+        match = re.search(pattern, content)
         if match:
-            if '{}' in format_str and len(match.groups()) == 2:
-                # 지역번호가 있는 경우
-                area_code = match.group(1)
-                suffix = match.group(2)
-                phone_number = format_str.format(area_code, suffix)
-            elif 'XXXX' in format_str:
-                # 전국대표번호 등에서 앞부분이 완전 마스킹된 경우
-                suffix = match.group(1)
-                phone_number = format_str.format(suffix)
+            if pattern.startswith(r'\*\*'):
+                # 전국대표번호
+                return f"**{match.group(1)}"
+            elif '070' in pattern:
+                # 070 번호
+                return f"070)**{match.group(1)}"
+            elif '02' in pattern:
+                # 02 번호  
+                return f"02)**{match.group(1)}"
+            elif '080' in pattern:
+                # 080 번호
+                return f"080)**{match.group(1)}"
+            elif len(match.groups()) == 2:
+                # 일반 지역번호
+                return f"{match.group(1)})**{match.group(2)}"
             else:
+                # 기타
+                return match.group(0)
+    
+    return None
+
+def extract_amounts_from_content(content):
+    """텍스트에서 각종 요금 정보를 추출합니다"""
+    def find_amount(pattern):
+        match = re.search(pattern, content)
+        if match:
+            amount_str = match.group(1).replace(',', '')
+            return int(amount_str) if amount_str.isdigit() else 0
+        return 0
+    
+    return {
+        '기본료': find_amount(r'(?:인터넷전화기본료|전국대표번호부가이용료|웹팩스\s*기본료|Biz\s*ARS)\s+([\d,]+)'),
+        '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
+        '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
+        '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)'),
+        '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
+        '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)'),
+        '사용요금계': find_amount(r'사용요금\s*계\s+([\d,]+)'),
+        '할인액': find_amount(r'할인\s+-?([\d,]+)'),
+        '부가세': find_amount(r'부가가치세\(세금\)\*?\s+([\d,]+)'),
+    }
                 # 고정 접두사가 있는 경우
                 suffix = match.group(1)
                 phone_number = format_str.format(suffix)
