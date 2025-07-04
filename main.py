@@ -374,6 +374,29 @@ def read_pdf(file_path):
         with open(file_path, 'rb') as pdf_file:
             reader = pypdf.PdfReader(pdf_file)
             full_text = "".join(page.extract_text() for page in reader.pages)
+            
+            # 디버깅: 추출된 텍스트의 일부를 출력
+            print("=== PDF 텍스트 추출 결과 ===")
+            print(f"전체 텍스트 길이: {len(full_text)} 문자")
+            print("처음 1000문자:")
+            print(full_text[:1000])
+            print("=" * 50)
+            
+            # 전화번호 패턴이 있는지 직접 확인
+            import re
+            patterns_to_check = [
+                (r'\*\*\d{2}-\d{4}', '전국대표번호'),
+                (r'02\)\*\*\d{2}-\d{4}', '02번호'),
+                (r'070\)\*\*\d{2}-\d{4}', '070번호'),
+                (r'080\)\*\*\d{1}-\d{4}', '080번호'),
+            ]
+            
+            print("텍스트에서 발견된 전화번호 패턴:")
+            for pattern, name in patterns_to_check:
+                matches = re.findall(pattern, full_text)
+                print(f"  {name}: {len(matches)}개 - {matches[:5]}")  # 최대 5개까지만 출력
+            print("=" * 50)
+            
             return full_text
     except Exception as e:
         print(f"PDF 읽기 에러: {e}")
