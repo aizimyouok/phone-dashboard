@@ -10,8 +10,8 @@
         <!-- 통합검색 바 -->
         <div class="filter-row" style="margin-bottom: 20px;">
             <div class="filter-group" style="flex: 2;">
-                <label>🔍 통합검색 (지점명, 전화번호, 청구월)</label>
-                <input type="text" id="unified-search" placeholder="검색어를 입력하세요... (예: 본점, 070-1234, 2024-12)">
+                <label>🔍 통합검색 (지점명, 사용자, 전화번호, 청구월)</label>
+                <input type="text" id="unified-search" placeholder="검색어를 입력하세요... (예: 본점, 홍길동, 070-1234, 2024-12)">
             </div>
             <button class="btn btn-primary" onclick="doUnifiedSearch()" style="height: 40px; margin-top: 25px;">통합검색</button>
         </div>
@@ -22,6 +22,12 @@
                 <label>지점</label>
                 <select id="branch-filter">
                     <option value="all">전체 지점</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>사용자</label>
+                <select id="user-filter">
+                    <option value="all">전체 사용자</option>
                 </select>
             </div>
             <div class="filter-group">
@@ -94,6 +100,7 @@
                     <tr id="table-header">
                         <th>청구월</th>
                         <th>지점명</th>
+                        <th>사용자</th>
                         <th>전화번호</th>
                         <th>기본료</th>
                         <th>시내통화료</th>
@@ -146,6 +153,19 @@
                 option.value = branch;
                 option.textContent = branch;
                 branchSelect.appendChild(option);
+            });
+            
+            // 사용자 목록 로드
+            const userResponse = await fetch(`${API_BASE}/api/users`);
+            const users = await userResponse.json();
+            
+            const userSelect = document.getElementById('user-filter');
+            userSelect.innerHTML = '<option value="all">전체 사용자</option>';
+            users.forEach(user => {
+                const option = document.createElement('option');
+                option.value = user;
+                option.textContent = user;
+                userSelect.appendChild(option);
             });
             
             // 청구월 목록 로드
@@ -204,6 +224,7 @@
     // 고급 필터 적용
     async function applyAdvancedFilters() {
         const branch = document.getElementById('branch-filter').value;
+        const user = document.getElementById('user-filter').value;
         const month = document.getElementById('month-filter').value;
         const type = document.getElementById('type-filter').value;
         const phone = document.getElementById('phone-search').value.trim();
@@ -213,6 +234,7 @@
             
             const params = new URLSearchParams();
             if (branch !== 'all') params.append('branch', branch);
+            if (user !== 'all') params.append('user', user);
             if (month !== 'all') params.append('month', month);
             if (type !== 'all') params.append('type', type);
             if (phone) params.append('phone', phone);
@@ -230,6 +252,7 @@
             // 필터 설명 생성
             let filterDesc = [];
             if (branch !== 'all') filterDesc.push(`지점: ${branch}`);
+            if (user !== 'all') filterDesc.push(`사용자: ${user}`);
             if (month !== 'all') filterDesc.push(`청구월: ${month}`);
             if (type !== 'all') filterDesc.push(`유형: ${type === 'basic' ? '기본료만' : '부가서비스'}`);
             if (phone) filterDesc.push(`전화번호: ${phone}`);
@@ -282,17 +305,18 @@
             const tr = tbody.insertRow();
             tr.insertCell(0).textContent = row.청구월;
             tr.insertCell(1).textContent = row.지점명;
-            tr.insertCell(2).textContent = row.전화번호;
+            tr.insertCell(2).textContent = row.사용자 || '';  // 사용자 컬럼 추가
+            tr.insertCell(3).textContent = row.전화번호;
             
             if (isDetailedView) {
-                tr.insertCell(3).textContent = formatCurrency(row.기본료);
-                tr.insertCell(4).textContent = formatCurrency(row.시내통화료);
-                tr.insertCell(5).textContent = formatCurrency(row.이동통화료);
-                tr.insertCell(6).textContent = formatCurrency(row['070통화료']);
-                tr.insertCell(7).textContent = formatCurrency(row.부가서비스료);
-                tr.insertCell(8).textContent = formatCurrency(row.최종합계);
+                tr.insertCell(4).textContent = formatCurrency(row.기본료);
+                tr.insertCell(5).textContent = formatCurrency(row.시내통화료);
+                tr.insertCell(6).textContent = formatCurrency(row.이동통화료);
+                tr.insertCell(7).textContent = formatCurrency(row['070통화료']);
+                tr.insertCell(8).textContent = formatCurrency(row.부가서비스료);
+                tr.insertCell(9).textContent = formatCurrency(row.최종합계);
             } else {
-                tr.insertCell(3).textContent = formatCurrency(row.최종합계);
+                tr.insertCell(4).textContent = formatCurrency(row.최종합계);
             }
         });
         
@@ -312,6 +336,7 @@
             headerRow.innerHTML = `
                 <th>청구월</th>
                 <th>지점명</th>
+                <th>사용자</th>
                 <th>전화번호</th>
                 <th>기본료</th>
                 <th>시내통화료</th>
@@ -325,6 +350,7 @@
             headerRow.innerHTML = `
                 <th>청구월</th>
                 <th>지점명</th>
+                <th>사용자</th>
                 <th>전화번호</th>
                 <th>최종합계</th>
             `;
@@ -342,6 +368,7 @@
     function resetAllFilters() {
         document.getElementById('unified-search').value = '';
         document.getElementById('branch-filter').value = 'all';
+        document.getElementById('user-filter').value = 'all';
         document.getElementById('month-filter').value = 'all';
         document.getElementById('type-filter').value = 'all';
         document.getElementById('phone-search').value = '';
@@ -375,12 +402,14 @@
             // 현재 필터 조건을 서버에 전송
             const params = new URLSearchParams();
             const branch = document.getElementById('branch-filter').value;
+            const user = document.getElementById('user-filter').value;
             const month = document.getElementById('month-filter').value;
             const type = document.getElementById('type-filter').value;
             const phone = document.getElementById('phone-search').value.trim();
             const search = document.getElementById('unified-search').value.trim();
             
             if (branch !== 'all') params.append('branch', branch);
+            if (user !== 'all') params.append('user', user);
             if (month !== 'all') params.append('month', month);
             if (type !== 'all') params.append('type', type);
             if (phone) params.append('phone', phone);

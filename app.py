@@ -355,6 +355,8 @@ class PhoneBillingDashboard:
             # 마스터 데이터 가져오기
             master_records = self.master_ws.get_all_records()
             master_phone_list = {str(record['전화번호']).strip(): record['지점명'] for record in master_records}
+            # 사용자 정보도 함께 저장
+            master_user_list = {str(record['전화번호']).strip(): record.get('사용자', '') for record in master_records}
             
             # 업데이트할 데이터 준비
             rows_to_append = []
@@ -363,6 +365,7 @@ class PhoneBillingDashboard:
                 
                 # 다양한 전화번호 형태에서 뒷자리 추출
                 branch_name = '미배정'
+                user_name = ''
                 full_phone_number = pdf_phone_number
                 
                 # PDF 전화번호에서 뒷자리 패턴 추출
@@ -394,6 +397,7 @@ class PhoneBillingDashboard:
                         # 1. 정확한 뒷자리 매칭 (우선순위 1)
                         if master_phone.endswith(pdf_suffix):
                             branch_name = master_branch
+                            user_name = master_user_list.get(master_phone, '')
                             full_phone_number = master_phone
                             break
                         
@@ -403,11 +407,13 @@ class PhoneBillingDashboard:
                         
                         if len(master_digits) >= len(pdf_digits) and master_digits.endswith(pdf_digits):
                             branch_name = master_branch
+                            user_name = master_user_list.get(master_phone, '')
                             full_phone_number = master_phone
                             break
                 
+                # 새로운 열 구조에 맞게 데이터 배열 (사용자 열 추가)
                 row = [
-                    billing_month, branch_name, full_phone_number,
+                    billing_month, branch_name, user_name, full_phone_number,  # 사용자 열 추가!
                     data.get('기본료', 0), data.get('시내통화료', 0), data.get('이동통화료', 0),
                     data.get('070통화료', 0), data.get('정보통화료', 0), data.get('부가서비스료', 0),
                     data.get('사용요금계', 0), data.get('할인액', 0), data.get('부가세', 0), data.get('최종합계', 0)
@@ -677,12 +683,13 @@ def filter_data():
             # 부가서비스 사용 회선
             filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
         
-        # 결과 변환
+        # 결과 변환 (filter_data API)
         result = []
         for _, row in filtered_df.iterrows():
             result.append({
                 "청구월": row.get('청구월', ''),
                 "지점명": row.get('지점명', ''),
+                "사용자": row.get('사용자', ''),  # 사용자 정보 추가
                 "전화번호": row.get('전화번호', ''),
                 "기본료": int(row.get('기본료', 0)),
                 "시내통화료": int(row.get('시내통화료', 0)),
@@ -715,6 +722,18 @@ def get_branches():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route('/api/users')
+def get_users():
+    """사용자 목록 반환"""
+    try:
+        df = dashboard.get_all_data()
+        users = sorted(df['사용자'].dropna().unique().tolist()) if '사용자' in df.columns else []
+        # 빈 값 제거
+        users = [user for user in users if user and user.strip()]
+        return jsonify(users)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route('/api/months')
 def get_months():
     """청구월 목록 반환"""
@@ -737,11 +756,12 @@ def search_data():
         # 필터 파라미터 받기
         branch = request.args.get('branch', '').strip()
         month = request.args.get('month', '').strip()
+        user = request.args.get('user', '').strip()  # 사용자 필터 추가
         phone_type = request.args.get('type', '').strip()
         search_text = request.args.get('q', '').strip()  # 통합검색
         phone_search = request.args.get('phone', '').strip()  # 전화번호 검색
         
-        print(f"검색 파라미터: branch={branch}, month={month}, type={phone_type}, search={search_text}, phone={phone_search}")
+        print(f"검색 파라미터: branch={branch}, month={month}, user={user}, type={phone_type}, search={search_text}, phone={phone_search}")
         
         # 필터 적용
         filtered_df = df.copy()
@@ -754,6 +774,10 @@ def search_data():
         if month and month != 'all':
             filtered_df = filtered_df[filtered_df['청구월'] == month]
         
+        # 사용자 필터 추가
+        if user and user != 'all':
+            filtered_df = filtered_df[filtered_df['사용자'] == user]
+        
         # 전화 타입 필터
         if phone_type == 'basic':
             # 기본료만 발생하는 회선: 기본료 + 부가서비스료 = 사용요금계
@@ -762,11 +786,12 @@ def search_data():
             # 부가서비스 사용 회선
             filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
         
-        # 통합검색 (지점명, 전화번호, 모든 텍스트 컬럼)
+        # 통합검색 (지점명, 전화번호, 사용자, 모든 텍스트 컬럼)
         if search_text:
             mask = (
                 filtered_df['지점명'].str.contains(search_text, na=False, case=False) |
                 filtered_df['전화번호'].str.contains(search_text, na=False, case=False) |
+                filtered_df['사용자'].str.contains(search_text, na=False, case=False) |  # 사용자도 검색 대상에 추가
                 filtered_df['청구월'].str.contains(search_text, na=False, case=False)
             )
             filtered_df = filtered_df[mask]
@@ -785,12 +810,13 @@ def search_data():
         else:
             total_cost = active_lines = basic_only_lines = vas_fee = avg_cost = 0
         
-        # 결과 변환
+        # 결과 변환 (search_data API)
         result = []
         for _, row in filtered_df.iterrows():
             result.append({
                 "청구월": row.get('청구월', ''),
                 "지점명": row.get('지점명', ''),
+                "사용자": row.get('사용자', ''),  # 사용자 정보 추가
                 "전화번호": row.get('전화번호', ''),
                 "기본료": int(row.get('기본료', 0)),
                 "시내통화료": int(row.get('시내통화료', 0)),
@@ -1049,6 +1075,7 @@ def export_filtered_excel():
         # 필터 적용
         branch = request.args.get('branch', '').strip()
         month = request.args.get('month', '').strip()
+        user = request.args.get('user', '').strip()  # 사용자 필터 추가
         phone_type = request.args.get('type', '').strip()
         search_text = request.args.get('q', '').strip()
         phone_search = request.args.get('phone', '').strip()
@@ -1061,6 +1088,9 @@ def export_filtered_excel():
         if month and month != 'all':
             filtered_df = filtered_df[filtered_df['청구월'] == month]
         
+        if user and user != 'all':
+            filtered_df = filtered_df[filtered_df['사용자'] == user]
+        
         if phone_type == 'basic':
             # 기본료만 발생하는 회선: 기본료 + 부가서비스료 = 사용요금계
             filtered_df = filtered_df[(filtered_df['기본료'] + filtered_df['부가서비스료']) == filtered_df['사용요금계']]
@@ -1071,6 +1101,7 @@ def export_filtered_excel():
             mask = (
                 filtered_df['지점명'].str.contains(search_text, na=False, case=False) |
                 filtered_df['전화번호'].str.contains(search_text, na=False, case=False) |
+                filtered_df['사용자'].str.contains(search_text, na=False, case=False) |  # 사용자도 검색 대상에 추가
                 filtered_df['청구월'].str.contains(search_text, na=False, case=False)
             )
             filtered_df = filtered_df[mask]

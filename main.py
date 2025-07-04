@@ -19,12 +19,14 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
     master_records = master_ws.get_all_records()
     # 마스터 시트의 전체 전화번호와 지점명을 모두 불러옵니다.
     master_phone_list = {str(record['전화번호']).strip(): record['지점명'] for record in master_records}
+    # 사용자 정보도 함께 저장
+    master_user_list = {str(record['전화번호']).strip(): record.get('사용자', '') for record in master_records}
     print(f"📋 마스터 데이터 로드: {len(master_phone_list)}개 전화번호")
 
     # 2. '청구내역 원본'에 기록할 데이터를 만듭니다.
     rows_to_append = []
     column_order = [
-        '청구월', '지점명', '전화번호', '기본료', '시내통화료', '이동통화료', 
+        '청구월', '지점명', '사용자', '전화번호', '기본료', '시내통화료', '이동통화료', 
         '070통화료', '정보통화료', '부가서비스료', '사용요금계', '할인액', '부가세', '최종합계'
     ]
     
@@ -36,6 +38,7 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
         
         # 다양한 전화번호 형태에서 뒷자리 추출
         branch_name = '미배정'
+        user_name = ''
         full_phone_number = pdf_phone_number
         
         # PDF 전화번호에서 뒷자리 패턴 추출
@@ -67,6 +70,7 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
                 # 1. 정확한 뒷자리 매칭 (우선순위 1)
                 if master_phone.endswith(pdf_suffix):
                     branch_name = master_branch
+                    user_name = master_user_list.get(master_phone, '')
                     full_phone_number = master_phone
                     break
                 
@@ -76,21 +80,24 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
                 
                 if len(master_digits) >= len(pdf_digits) and master_digits.endswith(pdf_digits):
                     branch_name = master_branch
+                    user_name = master_user_list.get(master_phone, '')
                     full_phone_number = master_phone
                     break
 
         # 매칭 결과 카운트
         if branch_name != '미배정':
             matched_count += 1
-            print(f"  ✅ {pdf_phone_number} → {full_phone_number} ({branch_name})")
+            user_display = f" - {user_name}" if user_name else ""
+            print(f"  ✅ {pdf_phone_number} → {full_phone_number} ({branch_name}{user_display})")
         else:
             unmatched_count += 1
             print(f"  ❌ {pdf_phone_number} → 미배정 (매칭 실패)")
 
-        # column_order 순서에 맞게 한 줄의 데이터를 리스트로 만듭니다.
+        # column_order 순서에 맞게 한 줄의 데이터를 리스트로 만듭니다. (사용자 열 추가)
         row = [
             billing_month,
             branch_name,
+            user_name,  # 사용자 열 추가!
             full_phone_number, # 마스터에서 찾은 전체 번호로 기록
             data.get('기본료', 0),
             data.get('시내통화료', 0),
