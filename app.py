@@ -551,8 +551,9 @@ def parse_invoice_data(text):
                 pattern_skipped += 1
                 continue
             
-            # 전화번호 위치에서 그 뒤의 텍스트를 가져와서 합계 금액 찾기
-            start_pos = match.end()
+            # 전화번호 위치에서 앞뒤 모두에서 합계 금액 찾기
+            phone_start = match.start()
+            phone_end = match.end()
             
             # 패턴별 맞춤형 검색 범위와 합계 패턴 설정
             search_ranges = []
@@ -590,15 +591,22 @@ def parse_invoice_data(text):
                     r'합.{0,3}계.{0,5}([\d,]+).{0,5}원',  # 매우 유연한 패턴
                 ]
             
-            # 다양한 범위와 패턴으로 합계 금액 찾기 시도
+            # 전화번호 앞뒤 모두에서 합계 금액 찾기 시도
             total_found = False
             debug_attempts = []
             
             for search_range in search_ranges:
-                remaining_text = text[start_pos:start_pos + search_range]
+                # 전화번호 뒤에서 찾기 (기존 방식)
+                after_text = text[phone_end:phone_end + search_range]
+                # 전화번호 앞에서 찾기 (새로 추가)
+                before_start = max(0, phone_start - search_range)
+                before_text = text[before_start:phone_start]
+                
+                # 앞뒤 텍스트 합치기 (전화번호 앞 + 전화번호 + 전화번호 뒤)
+                combined_text = before_text + " " + text[phone_start:phone_end] + " " + after_text
                 
                 for total_pattern in total_patterns:
-                    total_match = re.search(total_pattern, remaining_text)
+                    total_match = re.search(total_pattern, combined_text)
                     if total_match:
                         total_amount_str = total_match.group(1).replace(',', '')
                         try:
@@ -614,8 +622,7 @@ def parse_invoice_data(text):
                         processed_suffixes.add(suffix)
                         
                         # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
-                        detail_text = remaining_text[:total_match.end()]
-                        amounts = extract_amounts_from_content(detail_text)
+                        amounts = extract_amounts_from_content(combined_text)
                         amounts['최종합계'] = total_amount
                         amounts['전화번호'] = phone_number
                         
@@ -625,6 +632,7 @@ def parse_invoice_data(text):
                         total_found = True
                         
                         # 성공 시 즉시 디버깅 정보 출력
+                        print(f"  ✅ {pattern_name} {phone_number} 파싱 성공 -> {total_amount}원")
                         print(f"  ✅ {pattern_name} {phone_number} 파싱 성공 -> {total_amount}원")
                         break
                     else:
