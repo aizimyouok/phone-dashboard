@@ -136,10 +136,12 @@ class PhoneBillingDashboard:
                 
                 # PDF 전화번호에서 뒷자리 패턴 추출
                 pdf_suffix = None
+                # 뒷자리 패턴 추출
                 suffix_patterns = [
                     r'XX(\d{2}-\d{4})$',      # 070-XX95-3210, 02-XX98-7065
                     r'XXXX-(\d{2}-\d{4})$',   # XXXX-99-2593  
                     r'XX(\d{1,2}-\d{4})$',    # 기타 변형
+                    r'XX(\d{1}-\d{4})$',      # 080-XX0-7100 형태
                 ]
                 
                 for pattern in suffix_patterns:
@@ -376,6 +378,7 @@ class PhoneBillingDashboard:
                     r'XX(\d{2}-\d{4})$',      # 070-XX95-3210, 02-XX98-7065
                     r'XXXX-(\d{2}-\d{4})$',   # XXXX-99-2593  
                     r'XX(\d{1,2}-\d{4})$',    # 기타 변형
+                    r'XX(\d{1}-\d{4})$',      # 080-XX0-7100 형태
                 ]
                 
                 for pattern in suffix_patterns:
@@ -451,66 +454,164 @@ def get_billing_month(text):
     return "날짜모름"
 
 def parse_invoice_data(text):
-    """PDF 텍스트에서 청구 데이터를 파싱합니다."""
-    blocks = re.split(r'유선전화', text)
+    """PDF 텍스트에서 청구 데이터를 파싱합니다. (개선된 버전)"""
+    # 서비스 구분별로 블록을 나누기 (더 정확한 패턴)
+    service_blocks = []
+    
+    # 다양한 서비스 구분 패턴들
+    service_patterns = [
+        r'유선전화\s*\(TL\)전국대표번호\(mig\)',
+        r'유선전화\s*\(TL\)소호',
+        r'유선전화\s*\(TL\)링크기본형\(가상\)',
+        r'유선전화\s*\(TL\)링크기본형\(실선\)',
+        r'유선전화\s*\(TL\)소호\(가상중계실\)',
+        r'유선전화\s*\(TL\)착신과금\(mig\)',
+        r'유선전화\s*\(TL\)웹팩스',
+        r'유선전화\s*(?!\(TL\))',  # 일반 유선전화
+    ]
+    
+    # 전체 텍스트를 서비스 블록으로 나누기
+    split_pattern = '|'.join(service_patterns)
+    blocks = re.split(f'({split_pattern})', text)
+    
     parsed_data = []
     
-    for block in blocks[1:]:
-        # 다양한 전화번호 패턴 매칭
-        phone_number = None
-        phone_patterns = [
-            # 070 번호: 070)**95-3210
-            (r'070\)\*\*(\d{2}-\d{4})', '070-XX{}'),
-            # 02 번호: 02)**98-7065  
-            (r'02\)\*\*(\d{2}-\d{4})', '02-XX{}'),
-            # 1599 번호: **99-2593
-            (r'\*\*(\d{2}-\d{4})', 'XXXX-{}'),
-            # 일반 지역번호: 031)**12-3456, 032)**34-5678 등
-            (r'(\d{2,3})\)\*\*(\d{2}-\d{4})', '{}-XX{}'),
-            # 기타 패턴: 1588, 1577 등
-            (r'(\d{4})\)\*\*(\d{1,2}-\d{4})', '{}-XX{}'),
-        ]
-        
-        for pattern, format_str in phone_patterns:
-            match = re.search(pattern, block)
-            if match:
-                if '{}' in format_str and len(match.groups()) == 2:
-                    # 지역번호가 있는 경우 (031)**12-3456 형태)
-                    area_code = match.group(1)
-                    suffix = match.group(2)
-                    phone_number = format_str.format(area_code, suffix)
-                elif 'XXXX' in format_str:
-                    # 1599 등의 번호에서 앞부분이 완전 마스킹된 경우
-                    suffix = match.group(1)
-                    phone_number = format_str.format(suffix)
-                else:
-                    # 070, 02 등 고정 접두사가 있는 경우
-                    suffix = match.group(1)
-                    phone_number = format_str.format(suffix)
-                break
-        
-        if not phone_number:
-            continue
+    # 블록들을 순회하면서 처리
+    for i in range(1, len(blocks), 2):  # 서비스명과 데이터가 번갈아 나타남
+        if i + 1 < len(blocks):
+            service_type = blocks[i].strip()
+            block_content = blocks[i + 1]
             
-        def find_amount(pattern):
-            match = re.search(pattern, block)
-            return int(match.group(1).replace(',', '')) if match else 0
-
-        data = {
-            '전화번호': phone_number,
-            '기본료': find_amount(r'인터넷전화기본료\s+([\d,]+)') or find_amount(r'기본료\s+([\d,]+)'),
-            '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
-            '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
-            '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)') or find_amount(r'국제통화료\s+([\d,]+)'),
-            '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
-            '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)') or find_amount(r'부가서비스료\s+([\d,]+)'),
-            '사용요금계': find_amount(r'사용요금 계\s+([\d,]+)') or find_amount(r'사용요금계\s+([\d,]+)'),
-            '할인액': find_amount(r'할인\s+-([\d,]+)') or find_amount(r'할인액\s+-([\d,]+)'),
-            '부가세': find_amount(r'부가가치세\(세금\)\*\s+([\d,]+)') or find_amount(r'부가세\s+([\d,]+)'),
-            '최종합계': find_amount(r'합계\s+([\d,]+)') or find_amount(r'최종합계\s+([\d,]+)')
-        }
-        parsed_data.append(data)
+            # 각 블록에서 개별 전화번호 항목들 추출
+            phone_entries = extract_phone_entries_from_block(service_type, block_content)
+            parsed_data.extend(phone_entries)
+    
     return parsed_data
+
+def extract_phone_entries_from_block(service_type, block_content):
+    """서비스 블록 내에서 개별 전화번호 항목들을 추출"""
+    entries = []
+    
+    # 전화번호별로 데이터를 나누기 (합계 기준으로 분리)
+    # "합계 XXXXX원" 패턴으로 각 전화번호의 끝을 구분
+    phone_sections = re.split(r'합계\s+[\d,]+\s*원', block_content)
+    
+    for section in phone_sections[:-1]:  # 마지막 섹션은 빈 내용이므로 제외
+        entry = extract_single_phone_data(service_type, section)
+        if entry:
+            entries.append(entry)
+    
+    return entries
+
+def extract_single_phone_data(service_type, section):
+    """개별 전화번호 섹션에서 데이터 추출"""
+    # 전화번호 패턴 매칭 (실제 PDF 형태에 맞게 개선)
+    phone_number = None
+    phone_patterns = [
+        # 전국대표번호: **99-2593, **00-1631
+        (r'\*\*(\d{2}-\d{4})', 'XXXX-{}'),
+        # 070 번호: 070)**03-2573
+        (r'070\)\*\*(\d{2}-\d{4})', '070-XX{}'),
+        # 02 번호: 02)**35-6493  
+        (r'02\)\*\*(\d{2}-\d{4})', '02-XX{}'),
+        # 080 번호: 080)**0-7100
+        (r'080\)\*\*(\d{1}-\d{4})', '080-XX{}'),
+        # 일반 지역번호: 031)**12-3456 등
+        (r'(\d{2,3})\)\*\*(\d{2}-\d{4})', '{}-XX{}'),
+        # 4자리 번호: 1588)**12-3456 등
+        (r'(\d{4})\)\*\*(\d{1,2}-\d{4})', '{}-XX{}'),
+    ]
+    
+    for pattern, format_str in phone_patterns:
+        match = re.search(pattern, section)
+        if match:
+            if '{}' in format_str and len(match.groups()) == 2:
+                # 지역번호가 있는 경우
+                area_code = match.group(1)
+                suffix = match.group(2)
+                phone_number = format_str.format(area_code, suffix)
+            elif 'XXXX' in format_str:
+                # 전국대표번호 등에서 앞부분이 완전 마스킹된 경우
+                suffix = match.group(1)
+                phone_number = format_str.format(suffix)
+            else:
+                # 고정 접두사가 있는 경우
+                suffix = match.group(1)
+                phone_number = format_str.format(suffix)
+            break
+    
+    if not phone_number:
+        return None
+    
+    def find_amount(patterns):
+        """여러 패턴을 시도해서 금액을 찾습니다"""
+        if isinstance(patterns, str):
+            patterns = [patterns]
+        
+        for pattern in patterns:
+            match = re.search(pattern, section)
+            if match:
+                return int(match.group(1).replace(',', ''))
+        return 0
+    
+    # 서비스 타입에 따른 기본료 패턴 결정
+    basic_fee_patterns = []
+    if '전국대표번호' in service_type:
+        basic_fee_patterns = [
+            r'전국대표번호부가이용료\s+([\d,]+)',
+            r'기본료\s+([\d,]+)'
+        ]
+    elif '웹팩스' in service_type:
+        basic_fee_patterns = [
+            r'웹팩스 기본료\s+([\d,]+)',
+            r'기본료\s+([\d,]+)'
+        ]
+    else:
+        basic_fee_patterns = [
+            r'인터넷전화기본료\s+([\d,]+)',
+            r'기본료\s+([\d,]+)'
+        ]
+    
+    # 부가서비스료 패턴도 서비스별로 구분
+    vas_fee_patterns = [
+        r'부가서비스이용료\s+([\d,]+)',
+        r'전국대표번호부가이용료\s+([\d,]+)',
+        r'웹팩스 국내이용료\s+([\d,]+)',
+        r'Biz ARS\s+([\d,]+)',
+        r'착신과금 접속료\s+([\d,]+)',
+        r'부가서비스료\s+([\d,]+)'
+    ]
+    
+    data = {
+        '전화번호': phone_number,
+        '기본료': find_amount(basic_fee_patterns),
+        '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
+        '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
+        '070통화료': find_amount([
+            r'인터넷전화통화료\(070\)\s+([\d,]+)',
+            r'국제통화료\s+([\d,]+)'
+        ]),
+        '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
+        '부가서비스료': find_amount(vas_fee_patterns),
+        '사용요금계': find_amount([
+            r'사용요금 계\s+([\d,]+)',
+            r'사용요금계\s+([\d,]+)'
+        ]),
+        '할인액': find_amount([
+            r'할인\s+-([\d,]+)',
+            r'할인액\s+-([\d,]+)'
+        ]),
+        '부가세': find_amount([
+            r'부가가치세\(세금\)\*\s+([\d,]+)',
+            r'부가세\s+([\d,]+)'
+        ]),
+        '최종합계': find_amount([
+            r'합계\s+([\d,]+)',
+            r'최종합계\s+([\d,]+)'
+        ])
+    }
+    
+    return data
 
 def read_pdf(file_path):
     """PDF 파일을 읽고 텍스트를 추출합니다."""
