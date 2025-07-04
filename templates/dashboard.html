@@ -43,7 +43,9 @@
         <!-- 지점별 요금 TOP 5 -->
         <div class="chart-container">
             <h3 style="margin: 0 0 20px 0;">📊 지점별 요금 TOP 5</h3>
-            <canvas id="top5Chart" width="400" height="300"></canvas>
+            <div style="position: relative; height: 300px; width: 100%;">
+                <canvas id="top5Chart"></canvas>
+            </div>
         </div>
         
         <!-- 빠른 액세스 -->
@@ -185,10 +187,13 @@
         }
         
         if (chartData.length === 0) {
+            // 데이터가 없을 때 메시지 표시
+            const canvas = document.getElementById('top5Chart');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = '#666';
             ctx.font = '16px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText('데이터가 없습니다', ctx.canvas.width/2, ctx.canvas.height/2);
+            ctx.fillText('데이터가 없습니다', canvas.width/2, canvas.height/2);
             return;
         }
         
@@ -219,6 +224,12 @@
                     }
                 },
                 scales: {
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 0
+                        }
+                    },
                     y: {
                         beginAtZero: true,
                         ticks: {
@@ -226,6 +237,12 @@
                                 return formatNumber(value) + '원';
                             }
                         }
+                    }
+                },
+                layout: {
+                    padding: {
+                        top: 10,
+                        bottom: 10
                     }
                 }
             }
