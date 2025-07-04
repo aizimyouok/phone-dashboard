@@ -501,19 +501,21 @@ def parse_invoice_data(text):
     
     # 전화번호 패턴들 (PDF에서 실제 나타나는 형태)
     phone_patterns = [
-        r'\*\*(\d{2}-\d{4})',           # **99-2593, **00-1631 (전국대표번호)
-        r'070\)\*\*(\d{2}-\d{4})',      # 070)**03-2573 (070번호)
-        r'02\)\*\*(\d{2}-\d{4})',       # 02)**35-6493 (02번호)
-        r'080\)\*\*(\d{1}-\d{4})',      # 080)**0-7100 (080번호)
+        (r'\*\*(\d{2}-\d{4})', '전국대표번호'),           # **99-2593, **00-1631 (전국대표번호)
+        (r'070\)\*\*(\d{2}-\d{4})', '070번호'),      # 070)**03-2573 (070번호)
+        (r'02\)\*\*(\d{2}-\d{4})', '02번호'),       # 02)**35-6493 (02번호)
+        (r'080\)\*\*(\d{1}-\d{4})', '080번호'),      # 080)**0-7100 (080번호)
     ]
     
+    print("=== 패턴별 매칭 결과 ===")
     # 각 패턴별로 전화번호를 찾고 데이터를 추출
-    for pattern in phone_patterns:
-        matches = re.finditer(pattern, text)
+    for pattern, pattern_name in phone_patterns:
+        matches = list(re.finditer(pattern, text))
+        print(f"{pattern_name} 패턴 '{pattern}': {len(matches)}개 매칭")
         
-        for match in matches:
+        for i, match in enumerate(matches):
             phone_number = match.group(0)  # 전체 매칭된 문자열
-            print(f"발견된 전화번호: {phone_number}")
+            print(f"  {i+1}. 발견된 전화번호: {phone_number}")
             
             # 전화번호 위치에서 그 뒤의 텍스트를 가져와서 합계 금액 찾기
             start_pos = match.end()
@@ -524,7 +526,7 @@ def parse_invoice_data(text):
             
             if total_match:
                 total_amount = int(total_match.group(1).replace(',', ''))
-                print(f"  → 합계: {total_amount}원")
+                print(f"     → 합계: {total_amount}원")
                 
                 # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
                 detail_text = remaining_text[:total_match.end()]
@@ -533,9 +535,9 @@ def parse_invoice_data(text):
                 amounts['전화번호'] = phone_number
                 
                 parsed_data.append(amounts)
-                print(f"  → 파싱 완료: {phone_number} ({total_amount}원)")
+                print(f"     → 파싱 완료: {phone_number} ({total_amount}원)")
             else:
-                print(f"  → 합계 금액 찾을 수 없음")
+                print(f"     → 합계 금액 찾을 수 없음")
     
     print(f"=== 파싱 완료: 총 {len(parsed_data)}개 전화번호 추출 ===")
     return parsed_data
@@ -1042,7 +1044,13 @@ def upload_pdf():
                         "text_length": len(debug_text),
                         "contains_star_star": "**" in debug_text,
                         "contains_02": "02)**" in debug_text,
-                        "contains_080": "080)**" in debug_text
+                        "contains_080": "080)**" in debug_text,
+                        "pattern_matches": {
+                            "전국대표번호": len(re.findall(r'\*\*\d{2}-\d{4}', debug_text)),
+                            "070번호": len(re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)),
+                            "02번호": len(re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)),
+                            "080번호": len(re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text))
+                        }
                     }
                     
                     if update_result.get("duplicate") and not overwrite:
