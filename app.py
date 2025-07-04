@@ -1027,6 +1027,10 @@ def upload_pdf():
                     # 구글 시트에 업데이트 (덮어쓰기 옵션 포함)
                     update_result = dashboard.update_spreadsheet_data(invoice_data, billing_month, overwrite)
                     
+                    # 디버깅: 파싱된 전화번호 목록 생성
+                    parsed_phones = [data.get('전화번호', 'Unknown') for data in invoice_data]
+                    print(f"브라우저로 전송할 파싱 결과: {parsed_phones}")
+                    
                     if update_result.get("duplicate") and not overwrite:
                         # 중복 데이터 발견 - 상세 정보 제공
                         duplicate_details = []
@@ -1045,7 +1049,8 @@ def upload_pdf():
                             "message": f"{billing_month} 청구월에서 {len(duplicate_details)}건의 중복 발견",
                             "existing_count": len(duplicate_details),
                             "new_data_count": len(invoice_data),
-                            "duplicate_details": duplicate_details[:5]  # 최대 5개까지만 표시
+                            "duplicate_details": duplicate_details[:5],  # 최대 5개까지만 표시
+                            "parsed_phones": parsed_phones  # 파싱된 전화번호 목록 추가
                         })
                     elif update_result["success"]:
                         # 성공
@@ -1058,7 +1063,8 @@ def upload_pdf():
                             "message": message,
                             "billing_month": billing_month,
                             "data_count": len(invoice_data),
-                            "overwritten": update_result.get("overwritten", False)
+                            "overwritten": update_result.get("overwritten", False),
+                            "parsed_phones": parsed_phones  # 파싱된 전화번호 목록 추가
                         })
                     else:
                         # 실패

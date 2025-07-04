@@ -543,6 +543,15 @@
             
             const result = await response.json();
             
+            // 디버깅: 파싱 결과를 콘솔에 출력
+            console.log('=== PDF 파싱 결과 ===');
+            console.log('전체 응답:', result);
+            if (result.parsed_phones) {
+                console.log('파싱된 전화번호 목록:', result.parsed_phones);
+                console.log('파싱된 전화번호 개수:', result.parsed_phones.length);
+            }
+            console.log('==================');
+            
             if (result.duplicate && !overwrite) {
                 currentUploadData = { fileInput, formData };
                 showDuplicateModal(result);
