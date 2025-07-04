@@ -134,11 +134,51 @@ class PhoneBillingDashboard:
                 new_phone = new_data['전화번호']
                 new_amount = new_data['최종합계']
                 
+                # PDF 전화번호에서 뒷자리 패턴 추출
+                pdf_suffix = None
+                suffix_patterns = [
+                    r'XX(\d{2}-\d{4})$',      # 070-XX95-3210, 02-XX98-7065
+                    r'XXXX-(\d{2}-\d{4})$',   # XXXX-99-2593  
+                    r'XX(\d{1,2}-\d{4})$',    # 기타 변형
+                ]
+                
+                for pattern in suffix_patterns:
+                    match = re.search(pattern, new_phone)
+                    if match:
+                        pdf_suffix = match.group(1)
+                        break
+                
+                # 뒷자리가 추출되지 않았다면 전체 번호에서 마지막 7글자 시도
+                if not pdf_suffix:
+                    clean_number = re.sub(r'[^0-9-]', '', new_phone)
+                    if len(clean_number) >= 7:
+                        pdf_suffix = clean_number[-7:]
+                
                 # 청구월 + 전화번호 + 최종합계가 모두 일치하는 기존 데이터 찾기
                 for existing in existing_records:
-                    if (existing.get('청구월') == billing_month and
-                        existing.get('전화번호', '').endswith(new_phone[-7:]) and  # 뒷자리 7글자로 비교
-                        existing.get('최종합계') == new_amount):
+                    if existing.get('청구월') != billing_month:
+                        continue
+                    
+                    if existing.get('최종합계') != new_amount:
+                        continue
+                    
+                    existing_phone = existing.get('전화번호', '')
+                    
+                    # 전화번호 매칭 (다양한 방식으로 시도)
+                    is_phone_match = False
+                    
+                    if pdf_suffix:
+                        # 1. 뒷자리 매칭
+                        if existing_phone.endswith(pdf_suffix):
+                            is_phone_match = True
+                        # 2. 숫자만 비교
+                        else:
+                            existing_digits = re.sub(r'[^0-9]', '', existing_phone)
+                            pdf_digits = re.sub(r'[^0-9]', '', pdf_suffix)
+                            if len(existing_digits) >= len(pdf_digits) and existing_digits.endswith(pdf_digits):
+                                is_phone_match = True
+                    
+                    if is_phone_match:
                         duplicates.append({
                             'new': new_data,
                             'existing': existing
@@ -319,18 +359,52 @@ class PhoneBillingDashboard:
             # 업데이트할 데이터 준비
             rows_to_append = []
             for data in invoice_data:
-                pdf_phone_number = data['전화번호']  # 예: "070-XX95-3210"
-                pdf_suffix = pdf_phone_number[-7:]  # 뒷자리 7글자 "95-3210"
+                pdf_phone_number = data['전화번호']  # 예: "070-XX95-3210", "02-XX98-7065", "XXXX-99-2593"
                 
+                # 다양한 전화번호 형태에서 뒷자리 추출
                 branch_name = '미배정'
                 full_phone_number = pdf_phone_number
                 
-                # 부분 일치로 지점명 찾기
-                for master_phone, master_branch in master_phone_list.items():
-                    if master_phone.endswith(pdf_suffix):
-                        branch_name = master_branch
-                        full_phone_number = master_phone
+                # PDF 전화번호에서 뒷자리 패턴 추출
+                pdf_suffix = None
+                
+                # 뒷자리 패턴 추출 (다양한 형태 지원)
+                suffix_patterns = [
+                    r'XX(\d{2}-\d{4})$',      # 070-XX95-3210, 02-XX98-7065
+                    r'XXXX-(\d{2}-\d{4})$',   # XXXX-99-2593  
+                    r'XX(\d{1,2}-\d{4})$',    # 기타 변형
+                ]
+                
+                for pattern in suffix_patterns:
+                    match = re.search(pattern, pdf_phone_number)
+                    if match:
+                        pdf_suffix = match.group(1)
                         break
+                
+                # 뒷자리가 추출되지 않았다면 전체 번호에서 마지막 7글자 시도
+                if not pdf_suffix:
+                    # 숫자와 하이픈만 추출해서 뒷자리 7글자 사용
+                    clean_number = re.sub(r'[^0-9-]', '', pdf_phone_number)
+                    if len(clean_number) >= 7:
+                        pdf_suffix = clean_number[-7:]
+                
+                # 마스터 데이터와 매칭
+                if pdf_suffix:
+                    for master_phone, master_branch in master_phone_list.items():
+                        # 1. 정확한 뒷자리 매칭 (우선순위 1)
+                        if master_phone.endswith(pdf_suffix):
+                            branch_name = master_branch
+                            full_phone_number = master_phone
+                            break
+                        
+                        # 2. 숫자만 비교 매칭 (우선순위 2)
+                        master_digits = re.sub(r'[^0-9]', '', master_phone)
+                        pdf_digits = re.sub(r'[^0-9]', '', pdf_suffix)
+                        
+                        if len(master_digits) >= len(pdf_digits) and master_digits.endswith(pdf_digits):
+                            branch_name = master_branch
+                            full_phone_number = master_phone
+                            break
                 
                 row = [
                     billing_month, branch_name, full_phone_number,
@@ -374,28 +448,60 @@ def parse_invoice_data(text):
     """PDF 텍스트에서 청구 데이터를 파싱합니다."""
     blocks = re.split(r'유선전화', text)
     parsed_data = []
+    
     for block in blocks[1:]:
-        phone_match = re.search(r'070\)\*\*(\d{2}-\d{4})', block)
-        if not phone_match:
-            continue
-        phone_number = f"070-XX{phone_match.group(1)}"
+        # 다양한 전화번호 패턴 매칭
+        phone_number = None
+        phone_patterns = [
+            # 070 번호: 070)**95-3210
+            (r'070\)\*\*(\d{2}-\d{4})', '070-XX{}'),
+            # 02 번호: 02)**98-7065  
+            (r'02\)\*\*(\d{2}-\d{4})', '02-XX{}'),
+            # 1599 번호: **99-2593
+            (r'\*\*(\d{2}-\d{4})', 'XXXX-{}'),
+            # 일반 지역번호: 031)**12-3456, 032)**34-5678 등
+            (r'(\d{2,3})\)\*\*(\d{2}-\d{4})', '{}-XX{}'),
+            # 기타 패턴: 1588, 1577 등
+            (r'(\d{4})\)\*\*(\d{1,2}-\d{4})', '{}-XX{}'),
+        ]
         
+        for pattern, format_str in phone_patterns:
+            match = re.search(pattern, block)
+            if match:
+                if '{}' in format_str and len(match.groups()) == 2:
+                    # 지역번호가 있는 경우 (031)**12-3456 형태)
+                    area_code = match.group(1)
+                    suffix = match.group(2)
+                    phone_number = format_str.format(area_code, suffix)
+                elif 'XXXX' in format_str:
+                    # 1599 등의 번호에서 앞부분이 완전 마스킹된 경우
+                    suffix = match.group(1)
+                    phone_number = format_str.format(suffix)
+                else:
+                    # 070, 02 등 고정 접두사가 있는 경우
+                    suffix = match.group(1)
+                    phone_number = format_str.format(suffix)
+                break
+        
+        if not phone_number:
+            continue
+            
         def find_amount(pattern):
             match = re.search(pattern, block)
             return int(match.group(1).replace(',', '')) if match else 0
 
         data = {
             '전화번호': phone_number,
-            '기본료': find_amount(r'인터넷전화기본료\s+([\d,]+)'),
+            '기본료': find_amount(r'인터넷전화기본료\s+([\d,]+)') or find_amount(r'기본료\s+([\d,]+)'),
             '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
             '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
-            '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)'),
+            '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)') or find_amount(r'국제통화료\s+([\d,]+)'),
             '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
-            '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)'),
-            '사용요금계': find_amount(r'사용요금 계\s+([\d,]+)'),
-            '할인액': find_amount(r'할인\s+-([\d,]+)'),
-            '부가세': find_amount(r'부가가치세\(세금\)\*\s+([\d,]+)'),
-            '최종합계': find_amount(r'합계\s+([\d,]+)')
+            '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)') or find_amount(r'부가서비스료\s+([\d,]+)'),
+            '사용요금계': find_amount(r'사용요금 계\s+([\d,]+)') or find_amount(r'사용요금계\s+([\d,]+)'),
+            '할인액': find_amount(r'할인\s+-([\d,]+)') or find_amount(r'할인액\s+-([\d,]+)'),
+            '부가세': find_amount(r'부가가치세\(세금\)\*\s+([\d,]+)') or find_amount(r'부가세\s+([\d,]+)'),
+            '최종합계': find_amount(r'합계\s+([\d,]+)') or find_amount(r'최종합계\s+([\d,]+)')
         }
         parsed_data.append(data)
     return parsed_data
@@ -420,6 +526,18 @@ def process_pdf(file_path):
         
         invoice_data = parse_invoice_data(pdf_text)
         billing_month = get_billing_month(pdf_text)
+        
+        # 디버깅 정보 출력
+        print(f"📋 PDF 파싱 결과:")
+        print(f"   청구월: {billing_month}")
+        print(f"   추출된 회선 수: {len(invoice_data)}")
+        
+        if invoice_data:
+            print(f"   추출된 전화번호들:")
+            for i, data in enumerate(invoice_data[:5], 1):  # 최대 5개만 출력
+                print(f"     {i}. {data['전화번호']} (최종합계: {data['최종합계']:,}원)")
+            if len(invoice_data) > 5:
+                print(f"     ... 외 {len(invoice_data) - 5}개 더")
         
         return invoice_data, billing_month
     except Exception as e:
