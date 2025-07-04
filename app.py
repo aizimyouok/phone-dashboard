@@ -317,32 +317,101 @@ def get_months():
         return jsonify({"error": str(e)})
 
 @app.route('/api/search')
-def search_phone():
-    """전화번호 검색"""
+def search_data():
+    """통합 검색 및 필터링"""
     try:
-        query = request.args.get('q', '')
         df = dashboard.get_all_data()
         
-        if query:
-            # 전화번호로 검색
-            filtered_df = df[df['전화번호'].str.contains(query, na=False)]
-        else:
-            filtered_df = df
+        if df.empty:
+            return jsonify({"error": "데이터가 없습니다", "data": [], "total": 0, "kpi": {}})
         
+        # 필터 파라미터 받기
+        branch = request.args.get('branch', '').strip()
+        month = request.args.get('month', '').strip()
+        phone_type = request.args.get('type', '').strip()
+        search_text = request.args.get('q', '').strip()  # 통합검색
+        phone_search = request.args.get('phone', '').strip()  # 전화번호 검색
+        
+        print(f"검색 파라미터: branch={branch}, month={month}, type={phone_type}, search={search_text}, phone={phone_search}")
+        
+        # 필터 적용
+        filtered_df = df.copy()
+        
+        # 지점 필터
+        if branch and branch != 'all':
+            filtered_df = filtered_df[filtered_df['지점명'] == branch]
+        
+        # 월 필터
+        if month and month != 'all':
+            filtered_df = filtered_df[filtered_df['청구월'] == month]
+        
+        # 전화 타입 필터
+        if phone_type == 'basic':
+            # 기본료만 발생하는 회선: 사용요금계 = 기본료
+            filtered_df = filtered_df[filtered_df['사용요금계'] == filtered_df['기본료']]
+        elif phone_type == 'vas':
+            # 부가서비스 사용 회선
+            filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
+        
+        # 통합검색 (지점명, 전화번호, 모든 텍스트 컬럼)
+        if search_text:
+            mask = (
+                filtered_df['지점명'].str.contains(search_text, na=False, case=False) |
+                filtered_df['전화번호'].str.contains(search_text, na=False, case=False) |
+                filtered_df['청구월'].str.contains(search_text, na=False, case=False)
+            )
+            filtered_df = filtered_df[mask]
+        
+        # 전화번호 검색 (기존 호환성)
+        if phone_search:
+            filtered_df = filtered_df[filtered_df['전화번호'].str.contains(phone_search, na=False)]
+        
+        # KPI 계산 (필터링된 데이터 기준)
+        if not filtered_df.empty:
+            total_cost = filtered_df['최종합계'].sum()
+            active_lines = len(filtered_df)
+            basic_only_lines = len(filtered_df[filtered_df['사용요금계'] == filtered_df['기본료']])
+            vas_fee = filtered_df['부가서비스료'].sum()
+            avg_cost = total_cost / active_lines if active_lines > 0 else 0
+        else:
+            total_cost = active_lines = basic_only_lines = vas_fee = avg_cost = 0
+        
+        # 결과 변환
         result = []
         for _, row in filtered_df.iterrows():
             result.append({
                 "청구월": row.get('청구월', ''),
                 "지점명": row.get('지점명', ''),
                 "전화번호": row.get('전화번호', ''),
-                "최종합계": int(row.get('최종합계', 0)),
-                "부가서비스료": int(row.get('부가서비스료', 0))
+                "기본료": int(row.get('기본료', 0)),
+                "시내통화료": int(row.get('시내통화료', 0)),
+                "이동통화료": int(row.get('이동통화료', 0)),
+                "070통화료": int(row.get('070통화료', 0)),
+                "정보통화료": int(row.get('정보통화료', 0)),
+                "부가서비스료": int(row.get('부가서비스료', 0)),
+                "사용요금계": int(row.get('사용요금계', 0)),
+                "할인액": int(row.get('할인액', 0)),
+                "부가세": int(row.get('부가세', 0)),
+                "최종합계": int(row.get('최종합계', 0))
             })
         
-        return jsonify(result)
+        return jsonify({
+            "data": result,
+            "total": len(result),
+            "kpi": {
+                "totalCost": int(total_cost),
+                "activeLines": active_lines,
+                "basicFeeOnlyLines": basic_only_lines,
+                "totalVasFee": int(vas_fee),
+                "avgCost": int(avg_cost)
+            }
+        })
         
     except Exception as e:
-        return jsonify({"error": str(e)})
+        print(f"검색 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "data": [], "total": 0, "kpi": {}})
 
 @app.route('/api/upload', methods=['POST'])
 def upload_pdf():

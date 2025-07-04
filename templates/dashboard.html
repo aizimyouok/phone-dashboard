@@ -312,9 +312,20 @@
             <div id="upload-status" style="margin-top: 10px;"></div>
         </section>
 
-        <!-- 필터 컨트롤 -->
+        <!-- 필터 컨트롤 및 통합검색 -->
         <section class="controls">
-            <h3>🔍 필터 및 검색</h3>
+            <h3>🔍 통합검색 및 필터</h3>
+            
+            <!-- 통합검색 바 -->
+            <div class="filter-row" style="margin-bottom: 20px;">
+                <div class="filter-group" style="flex: 2;">
+                    <label>🔍 통합검색 (지점명, 전화번호, 청구월)</label>
+                    <input type="text" id="unified-search" placeholder="검색어를 입력하세요... (예: 본점, 070-1234, 2024-12)">
+                </div>
+                <button class="btn btn-primary" onclick="doUnifiedSearch()" style="height: 40px; margin-top: 25px;">통합검색</button>
+            </div>
+            
+            <!-- 상세 필터 -->
             <div class="filter-row">
                 <div class="filter-group">
                     <label>지점</label>
@@ -336,16 +347,45 @@
                         <option value="vas">부가서비스 이용</option>
                     </select>
                 </div>
-                <div class="search-container">
-                    <div class="filter-group">
-                        <label>전화번호 검색</label>
-                        <input type="text" id="phone-search" placeholder="전화번호 입력">
-                    </div>
-                    <button class="btn btn-primary" onclick="searchPhone()">검색</button>
+                <div class="filter-group">
+                    <label>전화번호 (선택)</label>
+                    <input type="text" id="phone-search" placeholder="전화번호 (선택사항)">
                 </div>
             </div>
-            <button class="btn btn-primary" onclick="applyFilters()">필터 적용</button>
-            <button class="btn btn-secondary" onclick="resetFilters()">초기화</button>
+            
+            <!-- 필터 버튼들 -->
+            <div class="filter-row" style="justify-content: flex-start; gap: 10px; margin-top: 15px;">
+                <button class="btn btn-primary" onclick="applyAdvancedFilters()">📊 고급필터 적용</button>
+                <button class="btn btn-secondary" onclick="resetAllFilters()">🔄 전체 초기화</button>
+                <button class="btn" onclick="toggleFilterResults()" id="toggle-results-btn" style="background: #28a745; color: white;">📋 필터 결과 보기</button>
+            </div>
+        </section>
+
+        <!-- 필터링된 데이터 KPI (검색 후 표시) -->
+        <section id="filtered-kpi-section" class="kpi-container" style="display: none; margin-bottom: 20px; border: 2px solid #007bff; border-radius: 10px; padding: 15px;">
+            <h3 style="margin: 0 0 15px 0; color: #007bff;">📊 필터링된 데이터 통계</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div class="kpi-card">
+                    <div class="title">필터된 총 요금</div>
+                    <div class="value" id="filtered-total-cost">...</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="title">필터된 회선 수</div>
+                    <div class="value" id="filtered-active-lines">...</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="title">평균 요금</div>
+                    <div class="value" id="filtered-avg-cost">...</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="title">기본료만 발생</div>
+                    <div class="value" id="filtered-basic-lines">...</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="title">부가서비스료</div>
+                    <div class="value" id="filtered-vas-fee">...</div>
+                </div>
+            </div>
         </section>
 
         <!-- KPI 카드 -->
@@ -453,6 +493,191 @@
         });
 
         // 대시보드 기본 데이터 로드
+        // 필터 옵션 새로고침 (PDF 업로드 후 호출)
+        async function refreshFilterOptions() {
+            try {
+                // 지점 목록 새로고침
+                const branchResponse = await fetch(`${API_BASE}/api/branches`);
+                const branches = await branchResponse.json();
+                
+                const branchSelect = document.getElementById('branch-filter');
+                const currentBranch = branchSelect.value;
+                branchSelect.innerHTML = '<option value="all">전체 지점</option>';
+                branches.forEach(branch => {
+                    const option = document.createElement('option');
+                    option.value = branch;
+                    option.textContent = branch;
+                    branchSelect.appendChild(option);
+                });
+                branchSelect.value = currentBranch;
+                
+                // 청구월 목록 새로고침
+                const monthResponse = await fetch(`${API_BASE}/api/months`);
+                const months = await monthResponse.json();
+                
+                const monthSelect = document.getElementById('month-filter');
+                const currentMonth = monthSelect.value;
+                monthSelect.innerHTML = '<option value="all">전체 월</option>';
+                months.forEach(month => {
+                    const option = document.createElement('option');
+                    option.value = month;
+                    option.textContent = month;
+                    monthSelect.appendChild(option);
+                });
+                monthSelect.value = currentMonth;
+                
+            } catch (error) {
+                console.error('필터 옵션 새로고침 실패:', error);
+            }
+        }
+
+        // 통합검색 실행
+        async function doUnifiedSearch() {
+            const searchText = document.getElementById('unified-search').value.trim();
+            
+            if (!searchText) {
+                alert('검색어를 입력해주세요.');
+                return;
+            }
+            
+            try {
+                showUploadStatus('검색 중...', 'loading');
+                
+                const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchText)}`);
+                const result = await response.json();
+                
+                if (result.error) {
+                    showUploadStatus(`❌ ${result.error}`, 'error');
+                    return;
+                }
+                
+                // 필터링된 KPI 업데이트
+                updateFilteredKPI(result.kpi, searchText);
+                
+                // 검색 결과 표시
+                displayAdvancedSearchResults(result.data, `통합검색: "${searchText}"`);
+                
+                showUploadStatus(`✅ 검색 완료: ${result.total}건`, 'success');
+                
+            } catch (error) {
+                showUploadStatus(`❌ 검색 실패: ${error.message}`, 'error');
+            }
+        }
+
+        // 고급 필터 적용
+        async function applyAdvancedFilters() {
+            const branch = document.getElementById('branch-filter').value;
+            const month = document.getElementById('month-filter').value;
+            const type = document.getElementById('type-filter').value;
+            const phone = document.getElementById('phone-search').value.trim();
+            
+            // 모든 필터가 기본값이면 경고
+            if (branch === 'all' && month === 'all' && type === 'all' && !phone) {
+                alert('최소 하나의 필터를 선택하거나 전화번호를 입력해주세요.');
+                return;
+            }
+            
+            try {
+                showUploadStatus('필터 적용 중...', 'loading');
+                
+                const params = new URLSearchParams();
+                if (branch !== 'all') params.append('branch', branch);
+                if (month !== 'all') params.append('month', month);
+                if (type !== 'all') params.append('type', type);
+                if (phone) params.append('phone', phone);
+                
+                const response = await fetch(`${API_BASE}/api/search?${params.toString()}`);
+                const result = await response.json();
+                
+                if (result.error) {
+                    showUploadStatus(`❌ ${result.error}`, 'error');
+                    return;
+                }
+                
+                // 필터 설명 생성
+                let filterDesc = [];
+                if (branch !== 'all') filterDesc.push(`지점: ${branch}`);
+                if (month !== 'all') filterDesc.push(`청구월: ${month}`);
+                if (type !== 'all') filterDesc.push(`유형: ${type === 'basic' ? '기본료만' : '부가서비스'}`);
+                if (phone) filterDesc.push(`전화번호: ${phone}`);
+                
+                // 필터링된 KPI 업데이트
+                updateFilteredKPI(result.kpi, filterDesc.join(', '));
+                
+                // 검색 결과 표시
+                displayAdvancedSearchResults(result.data, `고급필터: ${filterDesc.join(', ')}`);
+                
+                showUploadStatus(`✅ 필터 완료: ${result.total}건`, 'success');
+                
+            } catch (error) {
+                showUploadStatus(`❌ 필터 실패: ${error.message}`, 'error');
+            }
+        }
+
+        // 필터링된 데이터 KPI 업데이트
+        function updateFilteredKPI(kpi, description) {
+            document.getElementById('filtered-total-cost').textContent = `${kpi.totalCost.toLocaleString()} 원`;
+            document.getElementById('filtered-active-lines').textContent = `${kpi.activeLines} 개`;
+            document.getElementById('filtered-avg-cost').textContent = `${kpi.avgCost.toLocaleString()} 원`;
+            document.getElementById('filtered-basic-lines').textContent = `${kpi.basicFeeOnlyLines} 개`;
+            document.getElementById('filtered-vas-fee').textContent = `${kpi.totalVasFee.toLocaleString()} 원`;
+            
+            // KPI 섹션 표시
+            const section = document.getElementById('filtered-kpi-section');
+            section.style.display = 'block';
+            
+            // 제목에 설명 추가
+            const title = section.querySelector('h3');
+            title.textContent = `📊 필터링된 데이터 통계 (${description})`;
+        }
+
+        // 향상된 검색 결과 표시
+        function displayAdvancedSearchResults(data, title) {
+            const section = document.getElementById('filtered-data-section');
+            const tbody = document.querySelector('#filtered-data-table tbody');
+            const countSpan = document.getElementById('data-count');
+            
+            tbody.innerHTML = '';
+            countSpan.textContent = `(${data.length}건)`;
+            
+            // 헤더 제목 업데이트
+            const headerDiv = section.querySelector('.card-header');
+            headerDiv.textContent = `${title} `;
+            headerDiv.appendChild(countSpan);
+            
+            data.forEach(row => {
+                const tr = tbody.insertRow();
+                tr.insertCell(0).textContent = row.청구월;
+                tr.insertCell(1).textContent = row.지점명;
+                tr.insertCell(2).textContent = row.전화번호;
+                tr.insertCell(3).textContent = row.기본료.toLocaleString() + '원';
+                tr.insertCell(4).textContent = row.시내통화료.toLocaleString() + '원';
+                tr.insertCell(5).textContent = row.이동통화료.toLocaleString() + '원';
+                tr.insertCell(6).textContent = row['070통화료'].toLocaleString() + '원';
+                tr.insertCell(7).textContent = row.부가서비스료.toLocaleString() + '원';
+                tr.insertCell(8).textContent = row.최종합계.toLocaleString() + '원';
+            });
+            
+            section.style.display = 'block';
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 필터 결과 토글
+        function toggleFilterResults() {
+            const section = document.getElementById('filtered-data-section');
+            const btn = document.getElementById('toggle-results-btn');
+            
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                btn.textContent = '📋 필터 결과 숨기기';
+                section.scrollIntoView({ behavior: 'smooth' });
+            } else {
+                section.style.display = 'none';
+                btn.textContent = '📋 필터 결과 보기';
+            }
+        }
+
+        // 대시보드 데이터 로드 (개선된 버전)
         async function loadDashboardData() {
             try {
                 const response = await fetch(`${API_BASE}/api/dashboard`);
@@ -466,6 +691,9 @@
                 updateKPI(data.kpi);
                 updateProblemLines(data.problemLines);
                 updateChart(data.top5Branches);
+                
+                // 필터 옵션도 함께 새로고침
+                await refreshFilterOptions();
                 
             } catch (error) {
                 showError('데이터를 불러오는데 실패했습니다: ' + error.message);
@@ -897,11 +1125,21 @@
             statusDiv.className = type; // CSS 클래스로 스타일링
         }
 
-        // 엔터키로 검색
-        document.getElementById('phone-search').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                searchPhone();
-            }
+        // 엔터키 이벤트 (개선된 버전)
+        document.addEventListener('DOMContentLoaded', function() {
+            // 통합검색 엔터키
+            document.getElementById('unified-search').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    doUnifiedSearch();
+                }
+            });
+            
+            // 전화번호 검색 엔터키
+            document.getElementById('phone-search').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    applyAdvancedFilters();
+                }
+            });
         });
     </script>
 </body>

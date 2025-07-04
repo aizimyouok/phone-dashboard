@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전화요금 대시보드</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; 
+            margin: 0; 
+            background-color: #f8f9fa;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 5px 0 0;
+            opacity: 0.9;
+        }
+        
+        .main-content { 
+            padding: 30px; 
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .controls h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+        }
+        
+        .filter-row {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .filter-group label {
+            font-size: 14px;
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .filter-group select, .filter-group input, .filter-group textarea {
+            padding: 8px 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .filter-group select:focus, .filter-group input:focus, .filter-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a6fd8;
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .kpi-container { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px; 
+        }
+        
+        .kpi-card { 
+            background: white; 
+            border-radius: 10px; 
+            padding: 25px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-left: 4px solid #667eea;
+            transition: transform 0.3s;
+        }
+        
+        .kpi-card:hover {
+            transform: translateY(-2px);
+        }
+        
+        .kpi-card .title { 
+            font-size: 14px; 
+            color: #6c757d; 
+            margin-bottom: 10px; 
+            font-weight: 500;
+        }
+        
+        .kpi-card .value { 
+            font-size: 32px; 
+            font-weight: bold; 
+            color: #333;
+        }
+        
+        .detail-container { 
+            display: grid; 
+            grid-template-columns: 2fr 1fr; 
+            gap: 20px; 
+            margin-bottom: 30px;
+        }
+        
+        .card { 
+            background: white; 
+            border-radius: 10px; 
+            padding: 25px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        
+        .card-header { 
+            font-size: 20px; 
+            font-weight: bold; 
+            margin-bottom: 20px; 
+            color: #333;
+        }
+        
+        .table-container {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            min-width: 800px;
+        }
+        
+        th, td { 
+            text-align: left; 
+            padding: 12px; 
+            border-bottom: 1px solid #dee2e6; 
+        }
+        
+        th { 
+            font-size: 14px; 
+            color: #495057; 
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        td { 
+            font-size: 14px; 
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        
+        .search-container {
+            display: flex;
+            gap: 10px;
+            align-items: end;
+        }
+        
+        .success {
+            color: #28a745;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        
+        #pdf-text {
+            width: 100%;
+            height: 100px;
+            resize: vertical;
+        }
+        
+        @media (max-width: 768px) {
+            .detail-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .filter-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .main-content {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>전화요금 대시보드</h1>
+        <p id="kpi-month">데이터 로딩 중...</p>
+    </header>
+
+    <main class="main-content">
+        <!-- PDF 텍스트 입력 섹션 -->
+        <section class="controls">
+            <h3>📄 PDF 텍스트 처리</h3>
+            <div class="filter-row" style="flex-direction: column; align-items: stretch;">
+                <div class="filter-group">
+                    <label>PDF에서 복사한 텍스트를 붙여넣기</label>
+                    <textarea id="pdf-text" placeholder="PDF 파일에서 전체 텍스트를 복사해서 여기에 붙여넣으세요..."></textarea>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-primary" onclick="processPdf()">텍스트 처리 및 시트 업데이트</button>
+                    <button class="btn btn-secondary" onclick="clearPdfText()">텍스트 지우기</button>
+                </div>
+            </div>
+            <div id="upload-status" style="margin-top: 10px;"></div>
+        </section>
+
+        <!-- 필터 컨트롤 -->
+        <section class="controls">
+            <h3>🔍 필터 및 검색</h3>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>지점</label>
+                    <select id="branch-filter">
+                        <option value="all">전체 지점</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>청구월</label>
+                    <select id="month-filter">
+                        <option value="all">전체 월</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>회선 유형</label>
+                    <select id="type-filter">
+                        <option value="all">전체</option>
+                        <option value="basic">기본료만 발생</option>
+                        <option value="vas">부가서비스 이용</option>
+                    </select>
+                </div>
+                <div class="search-container">
+                    <div class="filter-group">
+                        <label>전화번호 검색</label>
+                        <input type="text" id="phone-search" placeholder="전화번호 입력">
+                    </div>
+                    <button class="btn btn-primary" onclick="searchPhone()">검색</button>
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="applyFilters()">필터 적용</button>
+            <button class="btn btn-secondary" onclick="resetFilters()">초기화</button>
+        </section>
+
+        <!-- KPI 카드 -->
+        <section class="kpi-container">
+            <div class="kpi-card">
+                <div class="title">총 요금</div>
+                <div class="value" id="kpi-total-cost">...</div>
+            </div>
+            <div class="kpi-card">
+                <div class="title">총 활성 회선</div>
+                <div class="value" id="kpi-active-lines">...</div>
+            </div>
+            <div class="kpi-card">
+                <div class="title">기본료만 발생 회선</div>
+                <div class="value" id="kpi-basic-lines">...</div>
+            </div>
+            <div class="kpi-card">
+                <div class="title">총 부가서비스 요금</div>
+                <div class="value" id="kpi-vas-fee">...</div>
+            </div>
+        </section>
+
+        <!-- 차트 섹션 -->
+        <section class="detail-container">
+            <div class="card">
+                <div class="card-header">문제 회선 목록 (기본료만 발생)</div>
+                <table id="problem-lines-table">
+                    <thead>
+                        <tr>
+                            <th>지점명</th>
+                            <th>전화번호</th>
+                            <th>최종합계</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card">
+                <div class="card-header">요금 상위 5개 지점</div>
+                <canvas id="top-branches-chart"></canvas>
+            </div>
+        </section>
+
+        <!-- 필터된 데이터 테이블 -->
+        <section class="table-container" id="filtered-data-section" style="display: none;">
+            <div class="card-header">필터된 데이터 <span id="data-count"></span></div>
+            <div style="overflow-x: auto;">
+                <table id="filtered-data-table">
+                    <thead>
+                        <tr>
+                            <th>청구월</th>
+                            <th>지점명</th>
+                            <th>전화번호</th>
+                            <th>기본료</th>
+                            <th>시내통화료</th>
+                            <th>이동통화료</th>
+                            <th>070통화료</th>
+                            <th>부가서비스료</th>
+                            <th>최종합계</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let chartInstance = null;
+
+        // 페이지 로드시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDashboardData();
+            loadBranches();
+            loadMonths();
+        });
+
+        // 대시보드 기본 데이터 로드
+        function loadDashboardData() {
+            showLoading('대시보드 데이터 로딩 중...');
+            
+            google.script.run
+                .withSuccessHandler(function(data) {
+                    updateKPI(data.kpi);
+                    updateProblemLines(data.problemLines);
+                    updateChart(data.top5Branches);
+                })
+                .withFailureHandler(function(error) {
+                    showError('데이터를 불러오는데 실패했습니다: ' + error.message);
+                })
+                .getDashboardData();
+        }
+
+        // KPI 업데이트
+        function updateKPI(kpi) {
+            document.getElementById('kpi-month').textContent = `기준 월: ${kpi.latestMonth}`;
+            document.getElementById('kpi-total-cost').textContent = `${kpi.totalCost.toLocaleString()} 원`;
+            document.getElementById('kpi-active-lines').textContent = `${kpi.activeLines} 개`;
+            document.getElementById('kpi-basic-lines').textContent = `${kpi.basicFeeOnlyLines} 개`;
+            document.getElementById('kpi-vas-fee').textContent = `${kpi.totalVasFee.toLocaleString()} 원`;
+        }
+
+        // 문제 회선 테이블 업데이트
+        function updateProblemLines(problemLines) {
+            const tbody = document.querySelector('#problem-lines-table tbody');
+            tbody.innerHTML = '';
+            
+            if (problemLines.length === 0) {
+                const row = tbody.insertRow();
+                const cell = row.insertCell(0);
+                cell.colSpan = 3;
+                cell.textContent = '문제 회선이 없습니다.';
+                cell.style.textAlign = 'center';
+                return;
+            }
+            
+            problemLines.forEach(line => {
+                const row = tbody.insertRow();
+                row.insertCell(0).textContent = line[0];
+                row.insertCell(1).textContent = line[1];
+                row.insertCell(2).textContent = line[2].toLocaleString() + ' 원';
+            });
+        }
+
+        // 차트 업데이트
+        function updateChart(top5Data) {
+            const ctx = document.getElementById('top-branches-chart');
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+            
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: top5Data.map(item => item[0]),
+                    datasets: [{
+                        label: '요금 합계',
+                        data: top5Data.map(item => item[1]),
+                        backgroundColor: 'rgba(102, 126, 234, 0.6)',
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString() + '원';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 지점 목록 로드
+        function loadBranches() {
+            google.script.run
+                .withSuccessHandler(function(branches) {
+                    const select = document.getElementById('branch-filter');
+                    
+                    // 기존 옵션 제거 (첫 번째 "전체 지점" 제외)
+                    while (select.children.length > 1) {
+                        select.removeChild(select.lastChild);
+                    }
+                    
+                    branches.forEach(branch => {
+                        const option = document.createElement('option');
+                        option.value = branch;
+                        option.textContent = branch;
+                        select.appendChild(option);
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    console.error('지점 목록 로드 실패:', error);
+                })
+                .getBranches();
+        }
+
+        // 청구월 목록 로드
+        function loadMonths() {
+            google.script.run
+                .withSuccessHandler(function(months) {
+                    const select = document.getElementById('month-filter');
+                    
+                    // 기존 옵션 제거 (첫 번째 "전체 월" 제외)
+                    while (select.children.length > 1) {
+                        select.removeChild(select.lastChild);
+                    }
+                    
+                    months.forEach(month => {
+                        const option = document.createElement('option');
+                        option.value = month;
+                        option.textContent = month;
+                        select.appendChild(option);
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    console.error('청구월 목록 로드 실패:', error);
+                })
+                .getMonths();
+        }
+
+        // 필터 적용
+        function applyFilters() {
+            const branch = document.getElementById('branch-filter').value;
+            const month = document.getElementById('month-filter').value;
+            const type = document.getElementById('type-filter').value;
+            
+            showLoading('필터 적용 중...');
+            
+            google.script.run
+                .withSuccessHandler(function(data) {
+                    displayFilteredData(data.data, data.total, data.totalCost);
+                })
+                .withFailureHandler(function(error) {
+                    showError('필터 적용 실패: ' + error.message);
+                })
+                .getFilteredData(branch, month, type);
+        }
+
+        // 전화번호 검색
+        function searchPhone() {
+            const query = document.getElementById('phone-search').value;
+            
+            if (!query.trim()) {
+                alert('전화번호를 입력해주세요.');
+                return;
+            }
+            
+            showLoading('검색 중...');
+            
+            google.script.run
+                .withSuccessHandler(function(data) {
+                    displaySearchResults(data);
+                })
+                .withFailureHandler(function(error) {
+                    showError('검색 실패: ' + error.message);
+                })
+                .searchPhone(query);
+        }
+
+        // PDF 텍스트 처리
+        function processPdf() {
+            const text = document.getElementById('pdf-text').value;
+            
+            if (!text.trim()) {
+                showUploadStatus('PDF 텍스트를 입력해주세요.', 'error');
+                return;
+            }
+            
+            showUploadStatus('PDF 텍스트 처리 중...', 'loading');
+            
+            google.script.run
+                .withSuccessHandler(function(result) {
+                    const { parsedData, billingMonth } = result;
+                    
+                    if (parsedData && parsedData.length > 0) {
+                        // 구글 시트에 업데이트
+                        google.script.run
+                            .withSuccessHandler(function(updateResult) {
+                                showUploadStatus(
+                                    `✅ 성공! ${updateResult.message} (${updateResult.billingMonth})`, 
+                                    'success'
+                                );
+                                // 대시보드 새로고침
+                                setTimeout(() => {
+                                    loadDashboardData();
+                                    loadBranches();
+                                    loadMonths();
+                                }, 1000);
+                            })
+                            .withFailureHandler(function(error) {
+                                showUploadStatus(`❌ 시트 업데이트 실패: ${error.message}`, 'error');
+                            })
+                            .updateSpreadsheet(parsedData, billingMonth);
+                    } else {
+                        showUploadStatus('❌ PDF에서 유효한 데이터를 찾을 수 없습니다', 'error');
+                    }
+                })
+                .withFailureHandler(function(error) {
+                    showUploadStatus(`❌ PDF 처리 실패: ${error.message}`, 'error');
+                })
+                .processPdfText(text);
+        }
+
+        // PDF 텍스트 지우기
+        function clearPdfText() {
+            document.getElementById('pdf-text').value = '';
+            document.getElementById('upload-status').textContent = '';
+        }
+
+        // 필터된 데이터 표시
+        function displayFilteredData(data, total, totalCost) {
+            const section = document.getElementById('filtered-data-section');
+            const tbody = document.querySelector('#filtered-data-table tbody');
+            const countSpan = document.getElementById('data-count');
+            
+            tbody.innerHTML = '';
+            countSpan.textContent = `(총 ${total}건, ${totalCost.toLocaleString()}원)`;
+            
+            data.forEach(row => {
+                const tr = tbody.insertRow();
+                tr.insertCell(0).textContent = row.청구월;
+                tr.insertCell(1).textContent = row.지점명;
+                tr.insertCell(2).textContent = row.전화번호;
+                tr.insertCell(3).textContent = row.기본료.toLocaleString() + '원';
+                tr.insertCell(4).textContent = row.시내통화료.toLocaleString() + '원';
+                tr.insertCell(5).textContent = row.이동통화료.toLocaleString() + '원';
+                tr.insertCell(6).textContent = row['070통화료'].toLocaleString() + '원';
+                tr.insertCell(7).textContent = row.부가서비스료.toLocaleString() + '원';
+                tr.insertCell(8).textContent = row.최종합계.toLocaleString() + '원';
+            });
+            
+            section.style.display = 'block';
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 검색 결과 표시
+        function displaySearchResults(data) {
+            const section = document.getElementById('filtered-data-section');
+            const tbody = document.querySelector('#filtered-data-table tbody');
+            const countSpan = document.getElementById('data-count');
+            
+            tbody.innerHTML = '';
+            countSpan.textContent = `(검색결과 ${data.length}건)`;
+            
+            data.forEach(row => {
+                const tr = tbody.insertRow();
+                tr.insertCell(0).textContent = row.청구월;
+                tr.insertCell(1).textContent = row.지점명;
+                tr.insertCell(2).textContent = row.전화번호;
+                tr.insertCell(3).textContent = '-';
+                tr.insertCell(4).textContent = '-';
+                tr.insertCell(5).textContent = '-';
+                tr.insertCell(6).textContent = '-';
+                tr.insertCell(7).textContent = row.부가서비스료.toLocaleString() + '원';
+                tr.insertCell(8).textContent = row.최종합계.toLocaleString() + '원';
+            });
+            
+            section.style.display = 'block';
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 필터 초기화
+        function resetFilters() {
+            document.getElementById('branch-filter').value = 'all';
+            document.getElementById('month-filter').value = 'all';
+            document.getElementById('type-filter').value = 'all';
+            document.getElementById('phone-search').value = '';
+            document.getElementById('filtered-data-section').style.display = 'none';
+        }
+
+        // 상태 표시 함수들
+        function showUploadStatus(message, type) {
+            const statusDiv = document.getElementById('upload-status');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+        }
+
+        function showLoading(message) {
+            document.getElementById('kpi-month').textContent = message;
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            document.querySelector('.main-content').insertBefore(errorDiv, document.querySelector('.kpi-container'));
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
+        // 엔터키로 검색
+        document.getElementById('phone-search').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchPhone();
+            }
+        });
+    </script>
+</body>
+</html>

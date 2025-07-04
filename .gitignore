@@ -1,0 +1,54 @@
+# 민감한 정보 파일들
+*.json
+phone-billing-automation-*.json
+
+# 파이썬 관련
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 가상환경
+venv/
+env/
+ENV/
+
+# PDF 파일들 (예시 파일들)
+*.pdf
+
+# IDE 설정 파일들
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 운영체제 파일들
+.DS_Store
+Thumbs.db
+
+# 로그 파일들
+*.log
+
+# 환경 변수 파일
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
