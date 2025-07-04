@@ -573,10 +573,23 @@
         const modal = document.getElementById('duplicate-modal');
         const message = document.getElementById('duplicate-message');
         
+        let duplicateDetailsHtml = '';
+        if (result.duplicate_details && result.duplicate_details.length > 0) {
+            duplicateDetailsHtml = '<br><br><strong>중복된 회선 정보:</strong><br>';
+            result.duplicate_details.forEach(detail => {
+                duplicateDetailsHtml += `• ${detail.phone} (${detail.existing_branch}) - ${formatCurrency(detail.amount)}<br>`;
+            });
+            if (result.existing_count > result.duplicate_details.length) {
+                duplicateDetailsHtml += `• 그 외 ${result.existing_count - result.duplicate_details.length}건 더...<br>`;
+            }
+        }
+        
         message.innerHTML = `
-            <strong>${result.billing_month}</strong> 청구월 데이터가 이미 <strong>${result.existing_count}건</strong> 존재합니다.<br>
-            새로 업로드할 데이터는 <strong>${result.new_data_count}건</strong>입니다.<br><br>
-            기존 데이터를 삭제하고 새 데이터로 덮어쓰시겠습니까?
+            <strong>${result.billing_month}</strong> 청구월에서 정확히 일치하는 데이터가 <strong>${result.existing_count}건</strong> 발견되었습니다.<br>
+            (전화번호 + 최종합계 금액이 동일한 데이터)<br>
+            새로 업로드할 데이터는 <strong>${result.new_data_count}건</strong>입니다.
+            ${duplicateDetailsHtml}<br>
+            중복된 데이터만 삭제하고 새 데이터로 덮어쓰시겠습니까?
         `;
         
         modal.style.display = 'block';

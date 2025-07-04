@@ -120,22 +120,103 @@ class PhoneBillingDashboard:
             print(f"마스터 데이터 가져오기 실패: {e}")
             return pd.DataFrame()
 
-    def check_duplicates(self, billing_month):
-        """특정 청구월의 중복 데이터 확인"""
+    def check_duplicates(self, invoice_data, billing_month):
+        """청구월 + 전화번호 + 최종합계 기준으로 중복 데이터 확인"""
         try:
             if not self.data_ws:
                 return False, []
             
             existing_records = self.data_ws.get_all_records()
-            duplicates = [record for record in existing_records if record.get('청구월') == billing_month]
+            
+            # 새로 업로드할 데이터와 기존 데이터 비교
+            duplicates = []
+            for new_data in invoice_data:
+                new_phone = new_data['전화번호']
+                new_amount = new_data['최종합계']
+                
+                # 청구월 + 전화번호 + 최종합계가 모두 일치하는 기존 데이터 찾기
+                for existing in existing_records:
+                    if (existing.get('청구월') == billing_month and
+                        existing.get('전화번호', '').endswith(new_phone[-7:]) and  # 뒷자리 7글자로 비교
+                        existing.get('최종합계') == new_amount):
+                        duplicates.append({
+                            'new': new_data,
+                            'existing': existing
+                        })
+                        break
             
             return len(duplicates) > 0, duplicates
         except Exception as e:
             print(f"중복 체크 실패: {e}")
             return False, []
     
+    def delete_duplicate_data(self, duplicates):
+        """중복된 특정 데이터들만 삭제"""
+        try:
+            if not self.data_ws or not duplicates:
+                return {"success": False, "error": "삭제할 데이터가 없습니다"}
+            
+            # 모든 데이터 가져오기
+            all_records = self.data_ws.get_all_values()
+            if not all_records:
+                return {"success": False, "error": "데이터가 없습니다"}
+            
+            # 헤더 행과 컬럼 인덱스 찾기
+            header_row = all_records[0]
+            phone_col = billing_month_col = amount_col = None
+            
+            for i, col in enumerate(header_row):
+                if '전화번호' in col:
+                    phone_col = i
+                elif '청구월' in col:
+                    billing_month_col = i
+                elif '최종합계' in col:
+                    amount_col = i
+            
+            if phone_col is None or billing_month_col is None or amount_col is None:
+                return {"success": False, "error": "필요한 컬럼을 찾을 수 없습니다"}
+            
+            # 삭제할 행 번호 찾기 (역순으로 삭제해야 인덱스가 안 꼬임)
+            rows_to_delete = []
+            for duplicate in duplicates:
+                existing_data = duplicate['existing']
+                target_phone = existing_data.get('전화번호', '')
+                target_month = existing_data.get('청구월', '')
+                target_amount = existing_data.get('최종합계', 0)
+                
+                for i, row in enumerate(all_records[1:], start=2):  # 2부터 시작 (헤더 제외)
+                    if (i <= len(all_records) and 
+                        phone_col < len(row) and billing_month_col < len(row) and amount_col < len(row)):
+                        row_phone = row[phone_col]
+                        row_month = row[billing_month_col]
+                        try:
+                            row_amount = int(row[amount_col]) if row[amount_col] else 0
+                        except:
+                            row_amount = 0
+                        
+                        if (row_month == target_month and 
+                            row_phone == target_phone and 
+                            row_amount == target_amount):
+                            rows_to_delete.append(i)
+                            break
+            
+            # 중복 제거 후 역순으로 삭제
+            rows_to_delete = sorted(set(rows_to_delete), reverse=True)
+            deleted_count = 0
+            for row_num in rows_to_delete:
+                self.data_ws.delete_rows(row_num)
+                deleted_count += 1
+            
+            return {"success": True, "deleted_count": deleted_count}
+            
+        except Exception as e:
+            print(f"중복 데이터 삭제 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
     def delete_billing_month_data(self, billing_month):
-        """특정 청구월의 모든 데이터 삭제"""
+        """특정 청구월의 모든 데이터 삭제 (월별 데이터 삭제용)"""
         try:
             if not self.data_ws:
                 return {"success": False, "error": "워크시트가 연결되지 않음"}
@@ -174,31 +255,62 @@ class PhoneBillingDashboard:
             return {"success": True, "deleted_count": deleted_count}
             
         except Exception as e:
+            print(f"월별 데이터 삭제 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+            
+            # 청구월 컬럼 찾기
+            for i, col in enumerate(header_row):
+                if '청구월' in col:
+                    billing_month_col = i
+                    break
+            
+            if billing_month_col is None:
+                return {"success": False, "error": "청구월 컬럼을 찾을 수 없습니다"}
+            
+            # 삭제할 행 번호 찾기 (역순으로 삭제해야 인덱스가 안 꼬임)
+            rows_to_delete = []
+            for i, row in enumerate(all_records[1:], start=2):  # 2부터 시작 (헤더 제외)
+                if i <= len(all_records) and billing_month_col < len(row):
+                    if row[billing_month_col] == billing_month:
+                        rows_to_delete.append(i)
+            
+            # 역순으로 삭제
+            deleted_count = 0
+            for row_num in reversed(rows_to_delete):
+                self.data_ws.delete_rows(row_num)
+                deleted_count += 1
+            
+            return {"success": True, "deleted_count": deleted_count}
+            
+        except Exception as e:
             print(f"데이터 삭제 실패: {e}")
             import traceback
             traceback.print_exc()
             return {"success": False, "error": str(e)}
 
     def update_spreadsheet_data(self, invoice_data, billing_month, overwrite=False):
-        """구글 시트에 데이터 업데이트 (중복 체크 및 덮어쓰기 옵션 포함)"""
+        """구글 시트에 데이터 업데이트 (정밀한 중복 체크 및 덮어쓰기 옵션 포함)"""
         try:
-            # 중복 체크
-            has_duplicates, existing_data = self.check_duplicates(billing_month)
+            # 중복 체크 (청구월 + 전화번호 + 최종합계 기준)
+            has_duplicates, duplicates = self.check_duplicates(invoice_data, billing_month)
             
             if has_duplicates and not overwrite:
                 return {
                     "success": False, 
                     "duplicate": True,
-                    "message": f"{billing_month} 청구월 데이터가 이미 존재합니다 ({len(existing_data)}건)",
-                    "existing_count": len(existing_data)
+                    "message": f"{billing_month} 청구월에서 {len(duplicates)}건의 중복 데이터가 발견되었습니다",
+                    "existing_count": len(duplicates),
+                    "duplicates": duplicates  # 중복 상세 정보 포함
                 }
             
-            # 덮어쓰기인 경우 기존 데이터 삭제
+            # 덮어쓰기인 경우 중복 데이터만 삭제
             if overwrite and has_duplicates:
-                delete_result = self.delete_billing_month_data(billing_month)
+                delete_result = self.delete_duplicate_data(duplicates)
                 if not delete_result["success"]:
-                    return {"success": False, "error": f"기존 데이터 삭제 실패: {delete_result['error']}"}
-                print(f"기존 데이터 {delete_result['deleted_count']}건 삭제 완료")
+                    return {"success": False, "error": f"중복 데이터 삭제 실패: {delete_result['error']}"}
+                print(f"중복 데이터 {delete_result['deleted_count']}건 삭제 완료")
             
             # 마스터 데이터 가져오기
             master_records = self.master_ws.get_all_records()
@@ -234,7 +346,8 @@ class PhoneBillingDashboard:
                 return {
                     "success": True, 
                     "rows_added": len(rows_to_append),
-                    "overwritten": overwrite and has_duplicates
+                    "overwritten": overwrite and has_duplicates,
+                    "duplicates_removed": len(duplicates) if overwrite and has_duplicates else 0
                 }
             
             return {"success": False, "message": "추가할 데이터가 없습니다"}
@@ -624,13 +737,24 @@ def upload_pdf():
                     update_result = dashboard.update_spreadsheet_data(invoice_data, billing_month, overwrite)
                     
                     if update_result.get("duplicate") and not overwrite:
-                        # 중복 데이터 발견
+                        # 중복 데이터 발견 - 상세 정보 제공
+                        duplicate_details = []
+                        for dup in update_result.get("duplicates", []):
+                            new_data = dup['new']
+                            existing_data = dup['existing']
+                            duplicate_details.append({
+                                "phone": new_data['전화번호'],
+                                "amount": new_data['최종합계'],
+                                "existing_branch": existing_data.get('지점명', '알 수 없음')
+                            })
+                        
                         return jsonify({
                             "duplicate": True,
                             "billing_month": billing_month,
-                            "message": update_result["message"],
-                            "existing_count": update_result["existing_count"],
-                            "new_data_count": len(invoice_data)
+                            "message": f"{billing_month} 청구월에서 {len(duplicate_details)}건의 중복 발견",
+                            "existing_count": len(duplicate_details),
+                            "new_data_count": len(invoice_data),
+                            "duplicate_details": duplicate_details[:5]  # 최대 5개까지만 표시
                         })
                     elif update_result["success"]:
                         # 성공
