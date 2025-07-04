@@ -8,6 +8,8 @@ import json
 import os
 import tempfile
 import io
+import pypdf
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -245,6 +247,72 @@ class PhoneBillingDashboard:
 
 dashboard = PhoneBillingDashboard()
 
+# ==================== PDF 처리 함수 ====================
+
+def get_billing_month(text):
+    """텍스트에서 'YYYY년 MM월'을 찾아 'YYYY-MM' 형식으로 반환합니다."""
+    match = re.search(r'(\d{4})년\s*(\d{2})월', text)
+    if match:
+        year, month = match.groups()
+        return f"{year}-{month}"
+    return "날짜모름"
+
+def parse_invoice_data(text):
+    """PDF 텍스트에서 청구 데이터를 파싱합니다."""
+    blocks = re.split(r'유선전화', text)
+    parsed_data = []
+    for block in blocks[1:]:
+        phone_match = re.search(r'070\)\*\*(\d{2}-\d{4})', block)
+        if not phone_match:
+            continue
+        phone_number = f"070-XX{phone_match.group(1)}"
+        
+        def find_amount(pattern):
+            match = re.search(pattern, block)
+            return int(match.group(1).replace(',', '')) if match else 0
+
+        data = {
+            '전화번호': phone_number,
+            '기본료': find_amount(r'인터넷전화기본료\s+([\d,]+)'),
+            '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
+            '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
+            '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)'),
+            '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
+            '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)'),
+            '사용요금계': find_amount(r'사용요금 계\s+([\d,]+)'),
+            '할인액': find_amount(r'할인\s+-([\d,]+)'),
+            '부가세': find_amount(r'부가가치세\(세금\)\*\s+([\d,]+)'),
+            '최종합계': find_amount(r'합계\s+([\d,]+)')
+        }
+        parsed_data.append(data)
+    return parsed_data
+
+def read_pdf(file_path):
+    """PDF 파일을 읽고 텍스트를 추출합니다."""
+    try:
+        with open(file_path, 'rb') as pdf_file:
+            reader = pypdf.PdfReader(pdf_file)
+            full_text = "".join(page.extract_text() for page in reader.pages)
+            return full_text
+    except Exception as e:
+        print(f"PDF 읽기 에러: {e}")
+        return None
+
+def process_pdf(file_path):
+    """PDF 파일을 처리하여 청구 데이터와 청구월을 반환합니다."""
+    try:
+        pdf_text = read_pdf(file_path)
+        if not pdf_text:
+            return None, None
+        
+        invoice_data = parse_invoice_data(pdf_text)
+        billing_month = get_billing_month(pdf_text)
+        
+        return invoice_data, billing_month
+    except Exception as e:
+        print(f"PDF 처리 오류: {e}")
+        return None, None
+
 # ==================== 페이지 라우트 ====================
 
 @app.route('/')
@@ -274,31 +342,61 @@ def get_dashboard_data():
         if df.empty:
             return jsonify({"error": "데이터가 없습니다"})
         
+        # 필터 파라미터 받기
+        branch = request.args.get('branch', 'all')
+        month = request.args.get('month', 'all')
+        
+        # 필터 적용
+        filtered_df = df.copy()
+        
+        if branch != 'all':
+            filtered_df = filtered_df[filtered_df['지점명'] == branch]
+        
+        if month != 'all':
+            filtered_df = filtered_df[filtered_df['청구월'] == month]
+        
         # 최신 월 데이터 추출
-        latest_month = df['청구월'].max() if '청구월' in df.columns else "알 수 없음"
+        latest_month = filtered_df['청구월'].max() if '청구월' in filtered_df.columns and not filtered_df.empty else "알 수 없음"
         
         # KPI 계산
-        total_cost = df['최종합계'].sum() if '최종합계' in df.columns else 0
-        active_lines = len(df) if not df.empty else 0
-        # 기본료만 발생한 회선: 사용요금계 = 기본료 (통화를 안 한 회선)
-        basic_only_lines = len(df[df['사용요금계'] == df['기본료']]) if '사용요금계' in df.columns and '기본료' in df.columns else 0
-        vas_fee = df['부가서비스료'].sum() if '부가서비스료' in df.columns else 0
+        total_cost = filtered_df['최종합계'].sum() if '최종합계' in filtered_df.columns else 0
+        active_lines = len(filtered_df) if not filtered_df.empty else 0
+        # 기본료만 발생한 회선: 기본료 + 부가서비스료 = 사용요금계 (통화를 안 한 회선)
+        basic_only_lines = len(filtered_df[(filtered_df['기본료'] + filtered_df['부가서비스료']) == filtered_df['사용요금계']]) if '사용요금계' in filtered_df.columns and '기본료' in filtered_df.columns and '부가서비스료' in filtered_df.columns else 0
+        vas_fee = filtered_df['부가서비스료'].sum() if '부가서비스료' in filtered_df.columns else 0
         
         # 지점별 요금 상위 5개
-        if '지점명' in df.columns and '최종합계' in df.columns:
-            top_branches = df.groupby('지점명')['최종합계'].sum().sort_values(ascending=False).head(5)
+        if '지점명' in filtered_df.columns and '최종합계' in filtered_df.columns and not filtered_df.empty:
+            top_branches = filtered_df.groupby('지점명')['최종합계'].sum().sort_values(ascending=False).head(5)
             top_branches_data = [[branch, int(cost)] for branch, cost in top_branches.items()]
         else:
             top_branches_data = []
         
-        # 문제 회선 (기본료만 발생하는 회선): 사용요금계 = 기본료
-        if '사용요금계' in df.columns and '기본료' in df.columns:
-            problem_lines = df[df['사용요금계'] == df['기본료']]
+        # 월별 추이 데이터 (최근 6개월)
+        monthly_trend_data = {"months": [], "totalCosts": []}
+        if '청구월' in df.columns and '최종합계' in df.columns and not df.empty:
+            # 지점 필터만 적용하고 월별 추이는 전체 기간 보여주기
+            trend_df = df.copy()
+            if branch != 'all':
+                trend_df = trend_df[trend_df['지점명'] == branch]
+            
+            monthly_totals = trend_df.groupby('청구월')['최종합계'].sum().sort_index()
+            monthly_trend_data = {
+                "months": monthly_totals.index.tolist()[-6:],  # 최근 6개월
+                "totalCosts": [int(cost) for cost in monthly_totals.values[-6:]]
+            }
+        
+        # 문제 회선 (기본료만 발생하는 회선): 기본료 + 부가서비스료 = 사용요금계
+        if '사용요금계' in filtered_df.columns and '기본료' in filtered_df.columns and '부가서비스료' in filtered_df.columns:
+            problem_lines = filtered_df[(filtered_df['기본료'] + filtered_df['부가서비스료']) == filtered_df['사용요금계']].sort_values('지점명')
             problem_lines_data = []
-            for _, row in problem_lines.head(10).iterrows():
+            for _, row in problem_lines.iterrows():
                 problem_lines_data.append([
                     row.get('지점명', ''),
                     row.get('전화번호', ''),
+                    int(row.get('사용요금계', 0)),
+                    int(row.get('할인액', 0)),
+                    int(row.get('부가세', 0)),
                     int(row.get('최종합계', 0))
                 ])
         else:
@@ -313,6 +411,7 @@ def get_dashboard_data():
                 "totalVasFee": int(vas_fee)
             },
             "top5Branches": top_branches_data,
+            "monthlyTrend": monthly_trend_data,
             "problemLines": problem_lines_data
         })
         
@@ -426,8 +525,8 @@ def search_data():
         
         # 전화 타입 필터
         if phone_type == 'basic':
-            # 기본료만 발생하는 회선: 사용요금계 = 기본료
-            filtered_df = filtered_df[filtered_df['사용요금계'] == filtered_df['기본료']]
+            # 기본료만 발생하는 회선: 기본료 + 부가서비스료 = 사용요금계
+            filtered_df = filtered_df[(filtered_df['기본료'] + filtered_df['부가서비스료']) == filtered_df['사용요금계']]
         elif phone_type == 'vas':
             # 부가서비스 사용 회선
             filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
@@ -721,7 +820,8 @@ def export_filtered_excel():
             filtered_df = filtered_df[filtered_df['청구월'] == month]
         
         if phone_type == 'basic':
-            filtered_df = filtered_df[filtered_df['사용요금계'] == filtered_df['기본료']]
+            # 기본료만 발생하는 회선: 기본료 + 부가서비스료 = 사용요금계
+            filtered_df = filtered_df[(filtered_df['기본료'] + filtered_df['부가서비스료']) == filtered_df['사용요금계']]
         elif phone_type == 'vas':
             filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
         
@@ -931,7 +1031,7 @@ def generate_cost_saving_suggestions(df):
         basic_only_lines = []
         for phone in df['전화번호'].unique():
             phone_df = df[df['전화번호'] == phone].sort_values('청구월').tail(3)
-            if len(phone_df) >= 3 and all(phone_df['사용요금계'] == phone_df['기본료']):
+            if len(phone_df) >= 3 and all((phone_df['기본료'] + phone_df['부가서비스료']) == phone_df['사용요금계']):
                 basic_only_lines.append(phone)
         
         if basic_only_lines:
@@ -1019,7 +1119,7 @@ def generate_detailed_branch_report(branch_df, branch_name):
         peak_amount = monthly_totals.max()
         
         # 기본료만 발생 회선
-        basic_only_lines = len(branch_df[branch_df['사용요금계'] == branch_df['기본료']])
+        basic_only_lines = len(branch_df[(branch_df['기본료'] + branch_df['부가서비스료']) == branch_df['사용요금계']])
         
         # 회선별 상세
         phone_details = []
@@ -1237,6 +1337,80 @@ def process_pdf(file_path):
     except Exception as e:
         print(f"PDF 처리 오류: {e}")
         return None, None
+
+# ==================== 리포트 생성 함수들 ====================
+
+def create_excel_report(df, report_name):
+    """Excel 리포트 생성"""
+    try:
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # 데이터 시트
+            df.to_excel(writer, sheet_name='데이터', index=False)
+            
+            # 요약 시트
+            if not df.empty:
+                summary_data = {
+                    '항목': ['총 요금', '총 회선수', '기본료만 발생 회선', '평균 요금'],
+                    '값': [
+                        df['최종합계'].sum() if '최종합계' in df.columns else 0,
+                        len(df),
+                        len(df[(df['기본료'] + df['부가서비스료']) == df['사용요금계']]) if '사용요금계' in df.columns and '기본료' in df.columns and '부가서비스료' in df.columns else 0,
+                        df['최종합계'].mean() if '최종합계' in df.columns and len(df) > 0 else 0
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='요약', index=False)
+        
+        output.seek(0)
+        return output
+        
+    except Exception as e:
+        print(f"Excel 리포트 생성 오류: {e}")
+        return None
+
+def create_branch_excel_report(branch_df, branch_name):
+    """지점별 상세 Excel 리포트 생성"""
+    try:
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # 상세 데이터
+            branch_df.to_excel(writer, sheet_name=f'{branch_name}_상세', index=False)
+            
+            # 월별 요약
+            if not branch_df.empty and '청구월' in branch_df.columns:
+                monthly_summary = branch_df.groupby('청구월').agg({
+                    '최종합계': ['sum', 'mean', 'count']
+                }).round(0)
+                monthly_summary.columns = ['총요금', '평균요금', '회선수']
+                monthly_summary.to_excel(writer, sheet_name='월별요약')
+        
+        output.seek(0)
+        return output
+        
+    except Exception as e:
+        print(f"지점별 Excel 리포트 생성 오류: {e}")
+        return None
+
+def create_pdf_report(report_data, report_name):
+    """PDF 리포트 생성 (기본 구현)"""
+    # 실제 구현에서는 reportlab 등을 사용
+    output = io.BytesIO()
+    output.write(b"PDF report placeholder")
+    output.seek(0)
+    return output
+
+def prepare_monthly_report_data(df, period, branch):
+    """월간 리포트 데이터 준비"""
+    # 리포트 데이터 준비 로직
+    return {"data": "월간 리포트 데이터"}
+
+def generate_detailed_branch_report(branch_df, branch):
+    """지점별 상세 리포트 생성"""
+    # 상세 리포트 로직
+    return {"branch": branch, "data": "상세 리포트"}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

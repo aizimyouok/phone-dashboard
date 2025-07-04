@@ -13,8 +13,30 @@
             </div>
             <button class="btn btn-primary" onclick="uploadPdf()">PDF 업로드 및 처리</button>
             <button class="btn btn-danger" onclick="showDeleteDialog()" style="margin-left: 10px;">🗑️ 데이터 삭제</button>
+            <button class="btn btn-secondary" onclick="exportExcel()" style="margin-left: 10px;">📥 Excel 내보내기</button>
         </div>
         <div id="upload-status" style="margin-top: 10px;"></div>
+    </section>
+
+    <!-- 기본 필터 -->
+    <section class="controls">
+        <h3>🔍 기본 필터</h3>
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>지점</label>
+                <select id="branch-filter">
+                    <option value="all">전체 지점</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>청구월</label>
+                <select id="month-filter">
+                    <option value="all">전체 월</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="applyDashboardFilter()">필터 적용</button>
+            <button class="btn btn-secondary" onclick="resetDashboardFilter()">초기화</button>
+        </div>
     </section>
 
     <!-- 전체 현황 KPI -->
@@ -48,36 +70,36 @@
             </div>
         </div>
         
-        <!-- 빠른 액세스 -->
+        <!-- 월별 추이 차트 -->
         <div class="chart-container">
-            <h3 style="margin: 0 0 20px 0;">🚀 빠른 액세스</h3>
-            <div style="display: grid; gap: 15px;">
-                <a href="/search" class="btn btn-primary" style="padding: 20px; text-decoration: none;">
-                    🔍 상세 검색<br>
-                    <small style="opacity: 0.8;">지점별, 월별 상세 검색</small>
-                </a>
-                <a href="/analytics" class="btn btn-success" style="padding: 20px; text-decoration: none;">
-                    📊 분석 리포트<br>
-                    <small style="opacity: 0.8;">트렌드 분석 및 리포트</small>
-                </a>
-                <button class="btn btn-secondary" onclick="exportExcel()" style="padding: 20px;">
-                    📥 Excel 내보내기<br>
-                    <small style="opacity: 0.8;">전체 데이터 다운로드</small>
-                </button>
+            <h3 style="margin: 0 0 20px 0;">📈 월별 요금 추이</h3>
+            <div style="position: relative; height: 300px; width: 100%;">
+                <canvas id="monthlyTrendChart"></canvas>
             </div>
         </div>
     </div>
 
-    <!-- 문제 회선 목록 -->
+    <!-- 기본료만 발생하는 회선 목록 -->
     <section class="table-container">
-        <div class="card-header">🚨 문제 회선 목록 (기본료만 발생)</div>
+        <div class="card-header">
+            🚨 기본료만 발생하는 회선 
+            <span id="problem-lines-count"></span>
+            <div style="float: right;">
+                <button class="btn btn-secondary" onclick="prevPage()" id="prev-btn" disabled style="padding: 5px 10px; font-size: 12px;">이전</button>
+                <span id="page-info" style="margin: 0 10px; font-size: 14px;">1 / 1</span>
+                <button class="btn btn-secondary" onclick="nextPage()" id="next-btn" disabled style="padding: 5px 10px; font-size: 12px;">다음</button>
+            </div>
+        </div>
         <div style="overflow-x: auto;">
             <table id="problem-lines-table">
                 <thead>
                     <tr>
-                        <th>지점명</th>
-                        <th>전화번호</th>
-                        <th>최종합계</th>
+                        <th onclick="sortTable(0)" style="cursor: pointer;">지점명 ↕️</th>
+                        <th onclick="sortTable(1)" style="cursor: pointer;">전화번호 ↕️</th>
+                        <th onclick="sortTable(2)" style="cursor: pointer;">사용요금계 ↕️</th>
+                        <th onclick="sortTable(3)" style="cursor: pointer;">할인액 ↕️</th>
+                        <th onclick="sortTable(4)" style="cursor: pointer;">부가세 ↕️</th>
+                        <th onclick="sortTable(5)" style="cursor: pointer;">최종합계 ↕️</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -120,16 +142,66 @@
 <script>
     let currentUploadData = null;
     let top5Chart = null;
+    let monthlyTrendChart = null;
+    let allProblemLines = [];
+    let currentPage = 1;
+    let itemsPerPage = 30;
+    let sortColumn = 0;
+    let sortAscending = true;
+    let currentFilter = { branch: 'all', month: 'all' };
 
     // 페이지 로드 시 초기화
     document.addEventListener('DOMContentLoaded', function() {
         loadDashboardData();
+        loadFilterOptions();
     });
+
+    // 필터 옵션 로드
+    async function loadFilterOptions() {
+        try {
+            // 지점 목록 로드
+            const branchResponse = await fetch(`${API_BASE}/api/branches`);
+            const branches = await branchResponse.json();
+            
+            const branchSelect = document.getElementById('branch-filter');
+            branches.forEach(branch => {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                branchSelect.appendChild(option);
+            });
+
+            // 월 목록 로드
+            const monthResponse = await fetch(`${API_BASE}/api/months`);
+            const months = await monthResponse.json();
+            
+            const monthSelect = document.getElementById('month-filter');
+            months.forEach(month => {
+                const option = document.createElement('option');
+                option.value = month;
+                option.textContent = month;
+                monthSelect.appendChild(option);
+            });
+
+            // 기본값 설정: 최신 월
+            if (months.length > 0) {
+                monthSelect.value = months[0];
+                currentFilter.month = months[0];
+            }
+            
+        } catch (error) {
+            console.error('필터 옵션 로드 실패:', error);
+        }
+    }
 
     // 대시보드 데이터 로드
     async function loadDashboardData() {
         try {
-            const response = await fetch(`${API_BASE}/api/dashboard`);
+            const params = new URLSearchParams();
+            if (currentFilter.branch !== 'all') params.append('branch', currentFilter.branch);
+            if (currentFilter.month !== 'all') params.append('month', currentFilter.month);
+            
+            const response = await fetch(`${API_BASE}/api/dashboard?${params}`);
             const data = await response.json();
             
             if (data.error) {
@@ -138,12 +210,37 @@
             }
 
             updateKPI(data.kpi);
-            updateProblemLines(data.problemLines);
-            updateChart(data.top5Branches);
+            allProblemLines = data.problemLines || [];
+            updateProblemLinesTable();
+            updateTop5Chart(data.top5Branches);
+            updateMonthlyTrendChart(data.monthlyTrend);
             
         } catch (error) {
             showError('데이터를 불러오는데 실패했습니다: ' + error.message);
         }
+    }
+
+    // 필터 적용
+    function applyDashboardFilter() {
+        const branchSelect = document.getElementById('branch-filter');
+        const monthSelect = document.getElementById('month-filter');
+        
+        currentFilter = {
+            branch: branchSelect.value,
+            month: monthSelect.value
+        };
+        
+        currentPage = 1;
+        loadDashboardData();
+    }
+
+    // 필터 초기화
+    function resetDashboardFilter() {
+        document.getElementById('branch-filter').value = 'all';
+        document.getElementById('month-filter').value = 'all';
+        currentFilter = { branch: 'all', month: 'all' };
+        currentPage = 1;
+        loadDashboardData();
     }
 
     // KPI 업데이트
@@ -155,31 +252,108 @@
         document.getElementById('kpi-vas-fee').textContent = formatCurrency(kpi.totalVasFee);
     }
 
-    // 문제 회선 테이블 업데이트
-    function updateProblemLines(problemLines) {
+    // 문제 회선 테이블 업데이트 (페이지네이션 및 정렬 포함)
+    function updateProblemLinesTable() {
         const tbody = document.querySelector('#problem-lines-table tbody');
         tbody.innerHTML = '';
         
-        if (problemLines.length === 0) {
+        if (allProblemLines.length === 0) {
             const row = tbody.insertRow();
             const cell = row.insertCell(0);
-            cell.colSpan = 3;
-            cell.textContent = '문제 회선이 없습니다. 👏';
+            cell.colSpan = 6;
+            cell.textContent = '기본료만 발생하는 회선이 없습니다. 👏';
             cell.style.textAlign = 'center';
             cell.style.color = '#28a745';
+            document.getElementById('problem-lines-count').textContent = '';
+            document.getElementById('page-info').textContent = '0 / 0';
             return;
         }
-        
-        problemLines.forEach(line => {
-            const row = tbody.insertRow();
-            row.insertCell(0).textContent = line[0];
-            row.insertCell(1).textContent = line[1];
-            row.insertCell(2).textContent = formatCurrency(line[2]);
+
+        // 정렬 적용
+        const sortedLines = [...allProblemLines].sort((a, b) => {
+            let aVal = a[sortColumn];
+            let bVal = b[sortColumn];
+            
+            // 숫자인 경우 숫자로 비교
+            if (typeof aVal === 'number' && typeof bVal === 'number') {
+                return sortAscending ? aVal - bVal : bVal - aVal;
+            }
+            
+            // 문자열인 경우 문자열로 비교
+            aVal = String(aVal).toLowerCase();
+            bVal = String(bVal).toLowerCase();
+            
+            if (aVal < bVal) return sortAscending ? -1 : 1;
+            if (aVal > bVal) return sortAscending ? 1 : -1;
+            return 0;
         });
+
+        // 페이지네이션 계산
+        const totalPages = Math.ceil(sortedLines.length / itemsPerPage);
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const pageData = sortedLines.slice(startIndex, endIndex);
+        
+        // 테이블 렌더링
+        pageData.forEach(line => {
+            const row = tbody.insertRow();
+            row.insertCell(0).textContent = line[0]; // 지점명
+            row.insertCell(1).textContent = line[1]; // 전화번호
+            row.insertCell(2).textContent = formatCurrency(line[2]); // 사용요금계
+            row.insertCell(3).textContent = formatCurrency(line[3]); // 할인액
+            row.insertCell(4).textContent = formatCurrency(line[4]); // 부가세
+            row.insertCell(5).textContent = formatCurrency(line[5]); // 최종합계
+        });
+        
+        // 카운트 및 페이지 정보 업데이트
+        document.getElementById('problem-lines-count').textContent = `(총 ${allProblemLines.length}개)`;
+        document.getElementById('page-info').textContent = `${currentPage} / ${totalPages}`;
+        
+        // 페이지 버튼 상태 업데이트
+        document.getElementById('prev-btn').disabled = currentPage <= 1;
+        document.getElementById('next-btn').disabled = currentPage >= totalPages;
     }
 
-    // 차트 업데이트
-    function updateChart(chartData) {
+    // 테이블 정렬
+    function sortTable(columnIndex) {
+        if (sortColumn === columnIndex) {
+            sortAscending = !sortAscending;
+        } else {
+            sortColumn = columnIndex;
+            sortAscending = true;
+        }
+        
+        // 헤더 화살표 업데이트
+        const headers = document.querySelectorAll('#problem-lines-table th');
+        headers.forEach((th, index) => {
+            if (index === columnIndex) {
+                th.innerHTML = th.innerHTML.split(' ')[0] + (sortAscending ? ' ↑' : ' ↓');
+            } else {
+                th.innerHTML = th.innerHTML.split(' ')[0] + ' ↕️';
+            }
+        });
+        
+        updateProblemLinesTable();
+    }
+
+    // 페이지 이동
+    function nextPage() {
+        const totalPages = Math.ceil(allProblemLines.length / itemsPerPage);
+        if (currentPage < totalPages) {
+            currentPage++;
+            updateProblemLinesTable();
+        }
+    }
+
+    function prevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            updateProblemLinesTable();
+        }
+    }
+
+    // 지점별 TOP 5 차트 업데이트
+    function updateTop5Chart(chartData) {
         const ctx = document.getElementById('top5Chart').getContext('2d');
         
         if (top5Chart) {
@@ -187,7 +361,6 @@
         }
         
         if (chartData.length === 0) {
-            // 데이터가 없을 때 메시지 표시
             const canvas = document.getElementById('top5Chart');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = '#666';
@@ -221,6 +394,19 @@
                 plugins: {
                     legend: {
                         display: false
+                    },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        formatter: function(value) {
+                            return formatNumber(value) + '원';
+                        },
+                        color: '#333',
+                        font: {
+                            size: 12,
+                            weight: 'bold'
+                        }
                     }
                 },
                 scales: {
@@ -241,11 +427,95 @@
                 },
                 layout: {
                     padding: {
-                        top: 10,
+                        top: 30,
                         bottom: 10
                     }
                 }
-            }
+            },
+            plugins: [ChartDataLabels]
+        });
+    }
+
+    // 월별 추이 차트 업데이트
+    function updateMonthlyTrendChart(trendData) {
+        const ctx = document.getElementById('monthlyTrendChart').getContext('2d');
+        
+        if (monthlyTrendChart) {
+            monthlyTrendChart.destroy();
+        }
+        
+        if (!trendData || trendData.months.length === 0) {
+            const canvas = document.getElementById('monthlyTrendChart');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('데이터가 없습니다', canvas.width/2, canvas.height/2);
+            return;
+        }
+        
+        monthlyTrendChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: trendData.months,
+                datasets: [{
+                    label: '총 요금',
+                    data: trendData.totalCosts,
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    datalabels: {
+                        display: true,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                        borderColor: '#667eea',
+                        borderRadius: 4,
+                        borderWidth: 1,
+                        formatter: function(value) {
+                            return formatNumber(value) + '원';
+                        },
+                        color: '#333',
+                        font: {
+                            size: 10,
+                            weight: 'bold'
+                        },
+                        padding: 4
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return formatNumber(value) + '원';
+                            }
+                        }
+                    }
+                },
+                layout: {
+                    padding: {
+                        top: 30,
+                        bottom: 10
+                    }
+                }
+            },
+            plugins: [ChartDataLabels]
         });
     }
 
@@ -449,4 +719,7 @@
         }
     }
 </script>
+
+<!-- Chart.js DataLabels 플러그인 추가 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 {% endblock %}
