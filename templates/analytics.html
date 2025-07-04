@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+
+{% block title %}분석 리포트 - 전화요금 관리 시스템{% endblock %}
+
+{% block extra_css %}
+<style>
+    .analysis-grid {
+        display: grid;
+        gap: 30px;
+        margin-bottom: 30px;
+    }
+    
+    .analysis-card {
+        background: white;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        transition: transform 0.3s;
+    }
+    
+    .analysis-card:hover {
+        transform: translateY(-5px);
+    }
+    
+    .analysis-card h3 {
+        margin: 0 0 20px 0;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .trend-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 10px;
+    }
+    
+    .trend-up { color: #dc3545; }
+    .trend-down { color: #28a745; }
+    .trend-stable { color: #6c757d; }
+    
+    .alert-item {
+        padding: 15px;
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        border-left: 4px solid #f39c12;
+    }
+    
+    .suggestion-item {
+        padding: 15px;
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        border-left: 4px solid #17a2b8;
+    }
+    
+    .chart-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    
+    .metric-badge {
+        background: #667eea;
+        color: white;
+        padding: 5px 10px;
+        border-radius: 15px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    
+    .branch-report-card {
+        border: 1px solid #dee2e6;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+    
+    .branch-report-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px 20px;
+        font-weight: bold;
+    }
+    
+    .branch-report-body {
+        padding: 20px;
+    }
+    
+    .loading-spinner {
+        display: none;
+        text-align: center;
+        padding: 20px;
+        color: #666;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+    <!-- 분석 리포트 헤더 -->
+    <section class="controls">
+        <h3>📊 분석 리포트 대시보드</h3>
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>분석 기간</label>
+                <select id="analysis-period">
+                    <option value="3">최근 3개월</option>
+                    <option value="6">최근 6개월</option>
+                    <option value="12">최근 12개월</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>분석 대상 지점</label>
+                <select id="analysis-branch">
+                    <option value="all">전체 지점</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="loadAnalysisData()">📊 분석 업데이트</button>
+            <button class="btn btn-success" onclick="generateMonthlyReport()">📋 월간 리포트 생성</button>
+        </div>
+        <div id="analysis-status" style="margin-top: 10px;"></div>
+    </section>
+
+    <!-- 분석 결과 -->
+    <div class="analysis-grid">
+        <!-- 1. 월별 비교 차트 -->
+        <div class="analysis-card">
+            <h3>📈 월별 요금 비교 분석</h3>
+            <div class="chart-controls">
+                <button class="btn btn-secondary" onclick="updateComparisonChart('total')">총 요금</button>
+                <button class="btn btn-secondary" onclick="updateComparisonChart('average')">평균 요금</button>
+                <button class="btn btn-secondary" onclick="updateComparisonChart('lines')">회선 수</button>
+            </div>
+            <div style="position: relative; height: 300px;">
+                <canvas id="comparisonChart"></canvas>
+            </div>
+            <div id="comparison-summary" style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                <div class="loading-spinner">데이터 로딩 중...</div>
+            </div>
+        </div>
+
+        <!-- 2. 지점별 트렌드 분석 -->
+        <div class="analysis-card">
+            <h3>📊 지점별 트렌드 분석</h3>
+            <div id="trend-analysis">
+                <div class="loading-spinner">트렌드 분석 중...</div>
+            </div>
+        </div>
+
+        <!-- 3. 이상 사용 감지 -->
+        <div class="analysis-card">
+            <h3>🚨 이상 사용 감지</h3>
+            <div id="anomaly-detection">
+                <div class="loading-spinner">이상 패턴 분석 중...</div>
+            </div>
+        </div>
+
+        <!-- 4. 비용 절감 제안 -->
+        <div class="analysis-card">
+            <h3>💡 비용 절감 제안</h3>
+            <div id="cost-saving-suggestions">
+                <div class="loading-spinner">절감 방안 분석 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 지점별 상세 리포트 -->
+    <section class="analysis-card">
+        <h3>🏢 지점별 상세 리포트</h3>
+        <div class="chart-controls">
+            <select id="detailed-branch-select">
+                <option value="all">전체 지점 보기</option>
+            </select>
+            <button class="btn btn-primary" onclick="loadBranchDetails()">상세 분석</button>
+            <button class="btn btn-success" onclick="exportBranchReport()">지점 리포트 다운로드</button>
+        </div>
+        <div id="branch-details">
+            <div class="loading-spinner">지점별 데이터 로딩 중...</div>
+        </div>
+    </section>
+
+    <!-- 리포트 생성 결과 -->
+    <div id="report-result" style="display: none; margin-top: 20px;"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let comparisonChart = null;
+    let currentAnalysisData = null;
+
+    // 페이지 로드 시 초기화
+    document.addEventListener('DOMContentLoaded', function() {
+        loadBranchOptions();
+        loadAnalysisData();
+    });
+
+    // 지점 옵션 로드
+    async function loadBranchOptions() {
+        try {
+            const response = await fetch(`${API_BASE}/api/branches`);
+            const branches = await response.json();
+            
+            // 분석 대상 지점 선택
+            const analysisSelect = document.getElementById('analysis-branch');
+            analysisSelect.innerHTML = '<option value="all">전체 지점</option>';
+            
+            // 상세 지점 선택
+            const detailSelect = document.getElementById('detailed-branch-select');
+            detailSelect.innerHTML = '<option value="all">전체 지점 보기</option>';
+            
+            branches.forEach(branch => {
+                const option1 = document.createElement('option');
+                option1.value = branch;
+                option1.textContent = branch;
+                analysisSelect.appendChild(option1);
+                
+                const option2 = document.createElement('option');
+                option2.value = branch;
+                option2.textContent = branch;
+                detailSelect.appendChild(option2);
+            });
+            
+        } catch (error) {
+            console.error('지점 옵션 로드 실패:', error);
+        }
+    }
+
+    // 분석 데이터 로드
+    async function loadAnalysisData() {
+        const period = document.getElementById('analysis-period').value;
+        const branch = document.getElementById('analysis-branch').value;
+        
+        showAnalysisStatus('분석 데이터 로딩 중...', 'loading');
+        
+        try {
+            const params = new URLSearchParams({
+                period: period,
+                branch: branch
+            });
+            
+            const response = await fetch(`${API_BASE}/api/analytics/comprehensive?${params}`);
+            const data = await response.json();
+            
+            if (data.error) {
+                showAnalysisStatus(`❌ ${data.error}`, 'error');
+                return;
+            }
+            
+            currentAnalysisData = data;
+            
+            // 각 분석 결과 업데이트
+            updateComparisonChart('total');
+            updateTrendAnalysis(data.trends);
+            updateAnomalyDetection(data.anomalies);
+            updateCostSavingSuggestions(data.suggestions);
+            
+            showAnalysisStatus('✅ 분석 완료!', 'success');
+            
+        } catch (error) {
+            showAnalysisStatus(`❌ 분석 실패: ${error.message}`, 'error');
+        }
+    }
+
+    // 월별 비교 차트 업데이트
+    function updateComparisonChart(metric = 'total') {
+        if (!currentAnalysisData || !currentAnalysisData.monthlyComparison) {
+            return;
+        }
+        
+        const ctx = document.getElementById('comparisonChart').getContext('2d');
+        const data = currentAnalysisData.monthlyComparison;
+        
+        if (comparisonChart) {
+            comparisonChart.destroy();
+        }
+        
+        let chartData, label, summary;
+        
+        switch(metric) {
+            case 'total':
+                chartData = data.totalCosts;
+                label = '총 요금 (원)';
+                summary = generateComparisonSummary(data.totalCosts, '총 요금');
+                break;
+            case 'average':
+                chartData = data.averageCosts;
+                label = '평균 요금 (원)';
+                summary = generateComparisonSummary(data.averageCosts, '평균 요금');
+                break;
+            case 'lines':
+                chartData = data.lineCounts;
+                label = '회선 수 (개)';
+                summary = generateComparisonSummary(data.lineCounts, '회선 수');
+                break;
+        }
+        
+        comparisonChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.months,
+                datasets: [{
+                    label: label,
+                    data: chartData,
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return metric === 'lines' ? value + '개' : formatNumber(value) + '원';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 요약 정보 업데이트
+        document.getElementById('comparison-summary').innerHTML = summary;
+    }
+
+    // 비교 요약 생성
+    function generateComparisonSummary(data, type) {
+        if (data.length < 2) return '<p>비교할 데이터가 부족합니다.</p>';
+        
+        const latest = data[data.length - 1];
+        const previous = data[data.length - 2];
+        const change = latest - previous;
+        const changePercent = ((change / previous) * 100).toFixed(1);
+        
+        const trendClass = change > 0 ? 'trend-up' : change < 0 ? 'trend-down' : 'trend-stable';
+        const trendIcon = change > 0 ? '📈' : change < 0 ? '📉' : '➡️';
+        const trendText = change > 0 ? '증가' : change < 0 ? '감소' : '변화없음';
+        
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>전월 대비 ${type} ${trendText}</strong>
+                    <div class="${trendClass}">
+                        ${trendIcon} ${Math.abs(changePercent)}% (${formatNumber(Math.abs(change))}${type.includes('회선') ? '개' : '원'})
+                    </div>
+                </div>
+                <div class="metric-badge">
+                    현재: ${formatNumber(latest)}${type.includes('회선') ? '개' : '원'}
+                </div>
+            </div>
+        `;
+    }
+
+    // 트렌드 분석 업데이트
+    function updateTrendAnalysis(trends) {
+        const container = document.getElementById('trend-analysis');
+        
+        if (!trends || trends.length === 0) {
+            container.innerHTML = '<p>트렌드 분석 데이터가 없습니다.</p>';
+            return;
+        }
+        
+        let html = '';
+        trends.forEach(trend => {
+            const trendClass = trend.direction === 'up' ? 'trend-up' : 
+                              trend.direction === 'down' ? 'trend-down' : 'trend-stable';
+            const trendIcon = trend.direction === 'up' ? '📈' : 
+                             trend.direction === 'down' ? '📉' : '➡️';
+            
+            html += `
+                <div class="trend-item">
+                    <div>
+                        <strong>${trend.branch}</strong>
+                        <div style="font-size: 14px; color: #666;">
+                            ${trend.period} 추세: ${trend.description}
+                        </div>
+                    </div>
+                    <div class="${trendClass}">
+                        ${trendIcon} ${trend.changePercent}%
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    }
+
+    // 이상 사용 감지 업데이트
+    function updateAnomalyDetection(anomalies) {
+        const container = document.getElementById('anomaly-detection');
+        
+        if (!anomalies || anomalies.length === 0) {
+            container.innerHTML = '<p style="color: #28a745;">✅ 이상 사용이 감지되지 않았습니다.</p>';
+            return;
+        }
+        
+        let html = '';
+        anomalies.forEach(anomaly => {
+            html += `
+                <div class="alert-item">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>🚨 ${anomaly.branch} - ${anomaly.phone}</strong>
+                            <div style="font-size: 14px; color: #666; margin-top: 5px;">
+                                ${anomaly.description}
+                            </div>
+                        </div>
+                        <div class="metric-badge" style="background: #dc3545;">
+                            +${anomaly.increasePercent}%
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; font-size: 14px;">
+                        이전 평균: ${formatCurrency(anomaly.previousAverage)} → 
+                        현재: ${formatCurrency(anomaly.currentAmount)}
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    }
+
+    // 비용 절감 제안 업데이트
+    function updateCostSavingSuggestions(suggestions) {
+        const container = document.getElementById('cost-saving-suggestions');
+        
+        if (!suggestions || suggestions.length === 0) {
+            container.innerHTML = '<p>현재 추가 절감 방안이 없습니다.</p>';
+            return;
+        }
+        
+        let html = '';
+        let totalSavings = 0;
+        
+        suggestions.forEach(suggestion => {
+            totalSavings += suggestion.potentialSavings;
+            html += `
+                <div class="suggestion-item">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>💡 ${suggestion.title}</strong>
+                            <div style="font-size: 14px; color: #666; margin-top: 5px;">
+                                ${suggestion.description}
+                            </div>
+                        </div>
+                        <div class="metric-badge" style="background: #17a2b8;">
+                            월 ${formatCurrency(suggestion.potentialSavings)} 절감
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; font-size: 14px;">
+                        대상: ${suggestion.targetCount}개 회선 | 우선순위: ${suggestion.priority}
+                    </div>
+                </div>
+            `;
+        });
+        
+        // 총 절감 가능 금액 표시
+        html = `
+            <div style="background: #d4edda; padding: 15px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
+                <strong>💰 총 절감 가능 금액: ${formatCurrency(totalSavings)}/월</strong>
+                <div style="font-size: 14px; color: #666;">연간 약 ${formatCurrency(totalSavings * 12)} 절감 가능</div>
+            </div>
+        ` + html;
+        
+        container.innerHTML = html;
+    }
+
+    // 지점별 상세 분석 로드
+    async function loadBranchDetails() {
+        const branch = document.getElementById('detailed-branch-select').value;
+        const container = document.getElementById('branch-details');
+        
+        container.innerHTML = '<div class="loading-spinner">지점별 상세 분석 중...</div>';
+        
+        try {
+            const params = new URLSearchParams({ branch: branch });
+            const response = await fetch(`${API_BASE}/api/analytics/branch-details?${params}`);
+            const data = await response.json();
+            
+            if (data.error) {
+                container.innerHTML = `<p class="error">❌ ${data.error}</p>`;
+                return;
+            }
+            
+            let html = '';
+            
+            if (branch === 'all') {
+                // 전체 지점 요약
+                data.branches.forEach(branchData => {
+                    html += generateBranchCard(branchData);
+                });
+            } else {
+                // 특정 지점 상세
+                html = generateDetailedBranchReport(data);
+            }
+            
+            container.innerHTML = html;
+            
+        } catch (error) {
+            container.innerHTML = `<p class="error">❌ 상세 분석 실패: ${error.message}</p>`;
+        }
+    }
+
+    // 지점 카드 생성
+    function generateBranchCard(branchData) {
+        return `
+            <div class="branch-report-card">
+                <div class="branch-report-header">
+                    🏢 ${branchData.name}
+                </div>
+                <div class="branch-report-body">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                        <div class="kpi-card" style="margin: 0;">
+                            <div class="title">총 요금</div>
+                            <div class="value" style="font-size: 20px;">${formatCurrency(branchData.totalCost)}</div>
+                        </div>
+                        <div class="kpi-card" style="margin: 0;">
+                            <div class="title">회선 수</div>
+                            <div class="value" style="font-size: 20px;">${branchData.lineCount}개</div>
+                        </div>
+                        <div class="kpi-card" style="margin: 0;">
+                            <div class="title">평균 요금</div>
+                            <div class="value" style="font-size: 20px;">${formatCurrency(branchData.averageCost)}</div>
+                        </div>
+                        <div class="kpi-card" style="margin: 0;">
+                            <div class="title">전월 대비</div>
+                            <div class="value trend-${branchData.trend.direction}" style="font-size: 16px;">
+                                ${branchData.trend.direction === 'up' ? '📈' : branchData.trend.direction === 'down' ? '📉' : '➡️'} 
+                                ${branchData.trend.changePercent}%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 상세 지점 리포트 생성
+    function generateDetailedBranchReport(data) {
+        return `
+            <div class="branch-report-card">
+                <div class="branch-report-header">
+                    🏢 ${data.branchName} 상세 분석 리포트
+                </div>
+                <div class="branch-report-body">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
+                        <div>
+                            <h4>📊 기본 통계</h4>
+                            <div class="trend-item">
+                                <span>총 회선 수</span>
+                                <span>${data.totalLines}개</span>
+                            </div>
+                            <div class="trend-item">
+                                <span>월 평균 요금</span>
+                                <span>${formatCurrency(data.monthlyAverage)}</span>
+                            </div>
+                            <div class="trend-item">
+                                <span>최고 사용 월</span>
+                                <span>${data.peakMonth} (${formatCurrency(data.peakAmount)})</span>
+                            </div>
+                            <div class="trend-item">
+                                <span>기본료만 발생 회선</span>
+                                <span>${data.basicOnlyLines}개</span>
+                            </div>
+                        </div>
+                        <div>
+                            <h4>📞 회선별 상세</h4>
+                            <div style="max-height: 300px; overflow-y: auto;">
+                                ${data.phoneDetails.map(phone => `
+                                    <div class="trend-item" style="font-size: 14px;">
+                                        <span>${phone.number}</span>
+                                        <span>${formatCurrency(phone.averageCost)}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // 월간 리포트 생성
+    async function generateMonthlyReport() {
+        showAnalysisStatus('월간 리포트 생성 중...', 'loading');
+        
+        try {
+            const period = document.getElementById('analysis-period').value;
+            const branch = document.getElementById('analysis-branch').value;
+            
+            const params = new URLSearchParams({
+                period: period,
+                branch: branch,
+                format: 'pdf'
+            });
+            
+            const response = await fetch(`${API_BASE}/api/analytics/monthly-report?${params}`);
+            
+            if (!response.ok) {
+                throw new Error('리포트 생성 실패');
+            }
+            
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `월간_분석_리포트_${new Date().toISOString().slice(0,10)}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showAnalysisStatus('✅ 월간 리포트 다운로드 완료!', 'success');
+            
+        } catch (error) {
+            showAnalysisStatus(`❌ 리포트 생성 실패: ${error.message}`, 'error');
+        }
+    }
+
+    // 지점 리포트 내보내기
+    async function exportBranchReport() {
+        const branch = document.getElementById('detailed-branch-select').value;
+        
+        if (branch === 'all') {
+            alert('특정 지점을 선택해주세요.');
+            return;
+        }
+        
+        try {
+            showAnalysisStatus('지점 리포트 생성 중...', 'loading');
+            
+            const params = new URLSearchParams({ branch: branch });
+            const response = await fetch(`${API_BASE}/api/analytics/branch-report?${params}`);
+            
+            if (!response.ok) {
+                throw new Error('지점 리포트 생성 실패');
+            }
+            
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${branch}_상세리포트_${new Date().toISOString().slice(0,10)}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showAnalysisStatus('✅ 지점 리포트 다운로드 완료!', 'success');
+            
+        } catch (error) {
+            showAnalysisStatus(`❌ 지점 리포트 생성 실패: ${error.message}`, 'error');
+        }
+    }
+
+    // 분석 상태 표시
+    function showAnalysisStatus(message, type) {
+        const statusDiv = document.getElementById('analysis-status');
+        statusDiv.textContent = message;
+        statusDiv.className = type;
+    }
+</script>
+{% endblock %}

@@ -232,7 +232,7 @@
         });
     }
 
-    // PDF 업로드 (기존 로직 유지)
+    // PDF 업로드
     async function uploadPdf(overwrite = false) {
         const fileInput = document.getElementById('pdf-file');
         
@@ -275,13 +275,14 @@
         }
     }
 
-    // 나머지 함수들은 기존과 동일...
+    // 업로드 상태 표시
     function showUploadStatus(message, type) {
         const statusDiv = document.getElementById('upload-status');
         statusDiv.textContent = message;
         statusDiv.className = type;
     }
 
+    // 중복 모달 표시
     function showDuplicateModal(result) {
         const modal = document.getElementById('duplicate-modal');
         const message = document.getElementById('duplicate-message');
@@ -295,11 +296,13 @@
         modal.style.display = 'block';
     }
 
+    // 중복 모달 닫기
     function closeDuplicateModal() {
         document.getElementById('duplicate-modal').style.display = 'none';
         showUploadStatus('업로드가 취소되었습니다.', 'error');
     }
 
+    // 덮어쓰기 실행
     async function overwriteData() {
         document.getElementById('duplicate-modal').style.display = 'none';
         
@@ -333,15 +336,18 @@
         }
     }
 
+    // 삭제 모달 표시
     async function showDeleteDialog() {
         await loadMonthsForDelete();
         document.getElementById('delete-modal').style.display = 'block';
     }
 
+    // 삭제 모달 닫기
     function closeDeleteModal() {
         document.getElementById('delete-modal').style.display = 'none';
     }
 
+    // 삭제용 월 목록 로드
     async function loadMonthsForDelete() {
         try {
             const response = await fetch(`${API_BASE}/api/months`);
@@ -362,6 +368,7 @@
         }
     }
 
+    // 데이터 삭제 실행
     async function deleteData() {
         const select = document.getElementById('delete-month-select');
         const selectedMonth = select.value;
@@ -405,6 +412,7 @@
         }
     }
 
+    // Excel 내보내기
     async function exportExcel() {
         try {
             showUploadStatus('Excel 파일 생성 중...', 'loading');

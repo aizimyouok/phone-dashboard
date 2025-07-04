@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file, redirect
 from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
@@ -6,6 +6,8 @@ import pandas as pd
 from datetime import datetime
 import json
 import os
+import tempfile
+import io
 
 app = Flask(__name__)
 CORS(app)
@@ -243,9 +245,25 @@ class PhoneBillingDashboard:
 
 dashboard = PhoneBillingDashboard()
 
+# ==================== 페이지 라우트 ====================
+
 @app.route('/')
 def index():
+    return redirect('/dashboard')
+
+@app.route('/dashboard')
+def dashboard_page():
     return render_template('dashboard.html')
+
+@app.route('/search')
+def search_page():
+    return render_template('search.html')
+
+@app.route('/analytics')
+def analytics_page():
+    return render_template('analytics.html')
+
+# ==================== 기존 API 엔드포인트 ====================
 
 @app.route('/api/dashboard')
 def get_dashboard_data():
@@ -575,6 +593,599 @@ def delete_billing_data():
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"삭제 중 오류: {str(e)}"})
+
+# ==================== 분석 및 리포트 API ====================
+
+@app.route('/api/analytics/comprehensive')
+def get_comprehensive_analytics():
+    """종합 분석 데이터"""
+    try:
+        period = int(request.args.get('period', 6))  # 기본 6개월
+        branch = request.args.get('branch', 'all')
+        
+        df = dashboard.get_all_data()
+        if df.empty:
+            return jsonify({"error": "분석할 데이터가 없습니다"})
+        
+        # 날짜 필터링
+        df['청구월_date'] = pd.to_datetime(df['청구월'], format='%Y-%m', errors='coerce')
+        recent_date = df['청구월_date'].max()
+        start_date = recent_date - pd.DateOffset(months=period-1)
+        filtered_df = df[df['청구월_date'] >= start_date]
+        
+        # 지점 필터링
+        if branch != 'all':
+            filtered_df = filtered_df[filtered_df['지점명'] == branch]
+        
+        # 월별 비교 데이터
+        monthly_comparison = generate_monthly_comparison(filtered_df)
+        
+        # 트렌드 분석
+        trends = generate_trend_analysis(filtered_df)
+        
+        # 이상 사용 감지
+        anomalies = detect_anomalies(filtered_df)
+        
+        # 비용 절감 제안
+        suggestions = generate_cost_saving_suggestions(filtered_df)
+        
+        return jsonify({
+            "monthlyComparison": monthly_comparison,
+            "trends": trends,
+            "anomalies": anomalies,
+            "suggestions": suggestions
+        })
+        
+    except Exception as e:
+        print(f"종합 분석 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)})
+
+@app.route('/api/analytics/branch-details')
+def get_branch_details():
+    """지점별 상세 분석"""
+    try:
+        branch = request.args.get('branch', 'all')
+        
+        df = dashboard.get_all_data()
+        if df.empty:
+            return jsonify({"error": "분석할 데이터가 없습니다"})
+        
+        if branch == 'all':
+            # 전체 지점 요약
+            branches = []
+            for branch_name in df['지점명'].unique():
+                branch_df = df[df['지점명'] == branch_name]
+                branch_data = generate_branch_summary(branch_df, branch_name)
+                branches.append(branch_data)
+            
+            return jsonify({"branches": branches})
+        else:
+            # 특정 지점 상세
+            branch_df = df[df['지점명'] == branch]
+            if branch_df.empty:
+                return jsonify({"error": f"{branch} 지점의 데이터가 없습니다"})
+            
+            detailed_data = generate_detailed_branch_report(branch_df, branch)
+            return jsonify(detailed_data)
+        
+    except Exception as e:
+        print(f"지점별 상세 분석 오류: {e}")
+        return jsonify({"error": str(e)})
+
+@app.route('/api/export/excel')
+def export_excel():
+    """전체 데이터 Excel 내보내기"""
+    try:
+        df = dashboard.get_all_data()
+        if df.empty:
+            return jsonify({"error": "내보낼 데이터가 없습니다"})
+        
+        # Excel 파일 생성
+        excel_file = create_excel_report(df, "전체_데이터")
+        
+        return send_file(
+            excel_file,
+            as_attachment=True,
+            download_name=f'전화요금_전체데이터_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        print(f"Excel 내보내기 오류: {e}")
+        return jsonify({"error": str(e)})
+
+@app.route('/api/export/excel-filtered')
+def export_filtered_excel():
+    """필터링된 데이터 Excel 내보내기"""
+    try:
+        # 검색 파라미터와 동일한 필터링 로직 사용
+        df = dashboard.get_all_data()
+        if df.empty:
+            return jsonify({"error": "내보낼 데이터가 없습니다"})
+        
+        # 필터 적용
+        branch = request.args.get('branch', '').strip()
+        month = request.args.get('month', '').strip()
+        phone_type = request.args.get('type', '').strip()
+        search_text = request.args.get('q', '').strip()
+        phone_search = request.args.get('phone', '').strip()
+        
+        filtered_df = df.copy()
+        
+        if branch and branch != 'all':
+            filtered_df = filtered_df[filtered_df['지점명'] == branch]
+        
+        if month and month != 'all':
+            filtered_df = filtered_df[filtered_df['청구월'] == month]
+        
+        if phone_type == 'basic':
+            filtered_df = filtered_df[filtered_df['사용요금계'] == filtered_df['기본료']]
+        elif phone_type == 'vas':
+            filtered_df = filtered_df[filtered_df['부가서비스료'] > 0]
+        
+        if search_text:
+            mask = (
+                filtered_df['지점명'].str.contains(search_text, na=False, case=False) |
+                filtered_df['전화번호'].str.contains(search_text, na=False, case=False) |
+                filtered_df['청구월'].str.contains(search_text, na=False, case=False)
+            )
+            filtered_df = filtered_df[mask]
+        
+        if phone_search:
+            filtered_df = filtered_df[filtered_df['전화번호'].str.contains(phone_search, na=False)]
+        
+        # Excel 파일 생성
+        excel_file = create_excel_report(filtered_df, "필터_검색결과")
+        
+        return send_file(
+            excel_file,
+            as_attachment=True,
+            download_name=f'필터_검색결과_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        print(f"필터 Excel 내보내기 오류: {e}")
+        return jsonify({"error": str(e)})
+
+@app.route('/api/analytics/monthly-report')
+def generate_monthly_report_api():
+    """월간 리포트 PDF 생성"""
+    try:
+        period = int(request.args.get('period', 6))
+        branch = request.args.get('branch', 'all')
+        
+        df = dashboard.get_all_data()
+        if df.empty:
+            return jsonify({"error": "리포트 생성할 데이터가 없습니다"})
+        
+        # 리포트 데이터 준비
+        report_data = prepare_monthly_report_data(df, period, branch)
+        
+        # PDF 생성
+        pdf_file = create_pdf_report(report_data, "월간_분석_리포트")
+        
+        return send_file(
+            pdf_file,
+            as_attachment=True,
+            download_name=f'월간_분석_리포트_{datetime.now().strftime("%Y%m%d")}.pdf',
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        print(f"월간 리포트 생성 오류: {e}")
+        return jsonify({"error": str(e)})
+
+@app.route('/api/analytics/branch-report')
+def generate_branch_report_api():
+    """지점별 리포트 Excel 생성"""
+    try:
+        branch = request.args.get('branch')
+        if not branch or branch == 'all':
+            return jsonify({"error": "특정 지점을 선택해주세요"})
+        
+        df = dashboard.get_all_data()
+        branch_df = df[df['지점명'] == branch]
+        
+        if branch_df.empty:
+            return jsonify({"error": f"{branch} 지점의 데이터가 없습니다"})
+        
+        # 지점별 상세 리포트 생성
+        excel_file = create_branch_excel_report(branch_df, branch)
+        
+        return send_file(
+            excel_file,
+            as_attachment=True,
+            download_name=f'{branch}_상세리포트_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        print(f"지점 리포트 생성 오류: {e}")
+        return jsonify({"error": str(e)})
+
+# ==================== 분석 로직 함수들 ====================
+
+def generate_monthly_comparison(df):
+    """월별 비교 데이터 생성"""
+    try:
+        if df.empty:
+            return {"months": [], "totalCosts": [], "averageCosts": [], "lineCounts": []}
+        
+        # 월별 그룹화
+        monthly_stats = df.groupby('청구월').agg({
+            '최종합계': ['sum', 'mean', 'count']
+        }).round(0)
+        
+        monthly_stats.columns = ['총요금', '평균요금', '회선수']
+        monthly_stats = monthly_stats.sort_index()
+        
+        return {
+            "months": monthly_stats.index.tolist(),
+            "totalCosts": monthly_stats['총요금'].astype(int).tolist(),
+            "averageCosts": monthly_stats['평균요금'].astype(int).tolist(),
+            "lineCounts": monthly_stats['회선수'].astype(int).tolist()
+        }
+    except Exception as e:
+        print(f"월별 비교 데이터 생성 오류: {e}")
+        return {"months": [], "totalCosts": [], "averageCosts": [], "lineCounts": []}
+
+def generate_trend_analysis(df):
+    """트렌드 분석"""
+    try:
+        if df.empty:
+            return []
+        
+        trends = []
+        
+        # 지점별 트렌드 분석
+        for branch in df['지점명'].unique():
+            branch_df = df[df['지점명'] == branch]
+            monthly_totals = branch_df.groupby('청구월')['최종합계'].sum().sort_index()
+            
+            if len(monthly_totals) < 2:
+                continue
+            
+            # 최근 3개월 vs 이전 3개월 비교
+            if len(monthly_totals) >= 6:
+                recent_avg = monthly_totals.tail(3).mean()
+                previous_avg = monthly_totals.iloc[-6:-3].mean()
+            else:
+                recent_avg = monthly_totals.tail(1).iloc[0]
+                previous_avg = monthly_totals.head(1).iloc[0]
+            
+            if previous_avg > 0:
+                change_percent = ((recent_avg - previous_avg) / previous_avg * 100)
+                
+                direction = 'up' if change_percent > 5 else 'down' if change_percent < -5 else 'stable'
+                
+                trend_description = f"최근 요금이 {'증가' if change_percent > 0 else '감소' if change_percent < 0 else '안정'}하고 있습니다"
+                
+                trends.append({
+                    "branch": branch,
+                    "direction": direction,
+                    "changePercent": f"{abs(change_percent):.1f}",
+                    "period": f"최근 {min(len(monthly_totals), 3)}개월",
+                    "description": trend_description
+                })
+        
+        return trends[:10]  # 상위 10개만 반환
+        
+    except Exception as e:
+        print(f"트렌드 분석 오류: {e}")
+        return []
+
+def detect_anomalies(df):
+    """이상 사용 감지"""
+    try:
+        if df.empty:
+            return []
+        
+        anomalies = []
+        
+        # 전화번호별 이상 사용 감지
+        for phone in df['전화번호'].unique():
+            phone_df = df[df['전화번호'] == phone].sort_values('청구월')
+            
+            if len(phone_df) < 3:  # 최소 3개월 데이터 필요
+                continue
+            
+            amounts = phone_df['최종합계'].values
+            
+            # 최근 달과 이전 평균 비교
+            recent_amount = amounts[-1]
+            historical_avg = amounts[:-1].mean()
+            
+            if historical_avg > 0:
+                increase_percent = ((recent_amount - historical_avg) / historical_avg * 100)
+                
+                # 100% 이상 증가한 경우 이상으로 판단
+                if increase_percent > 100:
+                    branch = phone_df.iloc[-1]['지점명']
+                    anomalies.append({
+                        "branch": branch,
+                        "phone": phone,
+                        "currentAmount": int(recent_amount),
+                        "previousAverage": int(historical_avg),
+                        "increasePercent": f"{increase_percent:.0f}",
+                        "description": f"평소 대비 {increase_percent:.0f}% 증가하여 이상 사용으로 감지되었습니다"
+                    })
+        
+        return sorted(anomalies, key=lambda x: float(x['increasePercent']), reverse=True)[:10]
+        
+    except Exception as e:
+        print(f"이상 사용 감지 오류: {e}")
+        return []
+
+def generate_cost_saving_suggestions(df):
+    """비용 절감 제안"""
+    try:
+        if df.empty:
+            return []
+        
+        suggestions = []
+        
+        # 1. 기본료만 발생하는 회선 (3개월 연속)
+        basic_only_lines = []
+        for phone in df['전화번호'].unique():
+            phone_df = df[df['전화번호'] == phone].sort_values('청구월').tail(3)
+            if len(phone_df) >= 3 and all(phone_df['사용요금계'] == phone_df['기본료']):
+                basic_only_lines.append(phone)
+        
+        if basic_only_lines:
+            avg_basic_fee = df[df['전화번호'].isin(basic_only_lines)]['기본료'].mean()
+            suggestions.append({
+                "title": "미사용 회선 해지",
+                "description": f"3개월 연속 기본료만 발생하는 {len(basic_only_lines)}개 회선을 해지하여 비용 절감",
+                "targetCount": len(basic_only_lines),
+                "potentialSavings": int(avg_basic_fee * len(basic_only_lines)),
+                "priority": "높음"
+            })
+        
+        # 2. 부가서비스 과다 사용 회선
+        high_vas_lines = df[df['부가서비스료'] > df['부가서비스료'].quantile(0.9)]
+        if not high_vas_lines.empty:
+            avg_vas_saving = high_vas_lines['부가서비스료'].mean() * 0.3  # 30% 절감 가정
+            suggestions.append({
+                "title": "부가서비스 최적화",
+                "description": f"부가서비스 사용량이 많은 회선의 서비스 재검토",
+                "targetCount": len(high_vas_lines),
+                "potentialSavings": int(avg_vas_saving * len(high_vas_lines)),
+                "priority": "중간"
+            })
+        
+        # 3. 요금제 최적화
+        high_cost_lines = df[df['최종합계'] > df['최종합계'].quantile(0.95)]
+        if not high_cost_lines.empty:
+            avg_optimization_saving = high_cost_lines['최종합계'].mean() * 0.15  # 15% 절감 가정
+            suggestions.append({
+                "title": "요금제 최적화",
+                "description": f"고액 요금 발생 회선의 요금제 변경 검토",
+                "targetCount": len(high_cost_lines),
+                "potentialSavings": int(avg_optimization_saving * len(high_cost_lines)),
+                "priority": "중간"
+            })
+        
+        return suggestions
+        
+    except Exception as e:
+        print(f"비용 절감 제안 생성 오류: {e}")
+        return []
+
+def generate_branch_summary(branch_df, branch_name):
+    """지점 요약 데이터 생성"""
+    try:
+        total_cost = branch_df['최종합계'].sum()
+        line_count = len(branch_df)
+        average_cost = total_cost / line_count if line_count > 0 else 0
+        
+        # 트렌드 계산 (최근 2개월 비교)
+        monthly_totals = branch_df.groupby('청구월')['최종합계'].sum().sort_index()
+        
+        if len(monthly_totals) >= 2:
+            recent = monthly_totals.iloc[-1]
+            previous = monthly_totals.iloc[-2]
+            change_percent = ((recent - previous) / previous * 100) if previous > 0 else 0
+            direction = 'up' if change_percent > 0 else 'down' if change_percent < 0 else 'stable'
+        else:
+            change_percent = 0
+            direction = 'stable'
+        
+        return {
+            "name": branch_name,
+            "totalCost": int(total_cost),
+            "lineCount": line_count,
+            "averageCost": int(average_cost),
+            "trend": {
+                "direction": direction,
+                "changePercent": f"{abs(change_percent):.1f}"
+            }
+        }
+    except Exception as e:
+        print(f"지점 요약 생성 오류: {e}")
+        return {"name": branch_name, "totalCost": 0, "lineCount": 0, "averageCost": 0, "trend": {"direction": "stable", "changePercent": "0"}}
+
+def generate_detailed_branch_report(branch_df, branch_name):
+    """상세 지점 리포트 데이터 생성"""
+    try:
+        total_lines = len(branch_df['전화번호'].unique())
+        monthly_average = branch_df.groupby('청구월')['최종합계'].sum().mean()
+        
+        # 최고 사용 월
+        monthly_totals = branch_df.groupby('청구월')['최종합계'].sum()
+        peak_month = monthly_totals.idxmax()
+        peak_amount = monthly_totals.max()
+        
+        # 기본료만 발생 회선
+        basic_only_lines = len(branch_df[branch_df['사용요금계'] == branch_df['기본료']])
+        
+        # 회선별 상세
+        phone_details = []
+        for phone in branch_df['전화번호'].unique():
+            phone_data = branch_df[branch_df['전화번호'] == phone]
+            avg_cost = phone_data['최종합계'].mean()
+            phone_details.append({
+                "number": phone,
+                "averageCost": int(avg_cost)
+            })
+        
+        phone_details.sort(key=lambda x: x['averageCost'], reverse=True)
+        
+        return {
+            "branchName": branch_name,
+            "totalLines": total_lines,
+            "monthlyAverage": int(monthly_average),
+            "peakMonth": peak_month,
+            "peakAmount": int(peak_amount),
+            "basicOnlyLines": basic_only_lines,
+            "phoneDetails": phone_details[:20]  # 상위 20개만
+        }
+    except Exception as e:
+        print(f"상세 지점 리포트 생성 오류: {e}")
+        return {"branchName": branch_name, "error": str(e)}
+
+# ==================== Excel/PDF 생성 함수들 ====================
+
+def create_excel_report(df, report_name):
+    """Excel 리포트 생성"""
+    try:
+        # 메모리에서 Excel 파일 생성
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # 메인 데이터 시트
+            df_export = df.copy()
+            # 불필요한 컬럼 제거
+            if '청구월_date' in df_export.columns:
+                df_export = df_export.drop('청구월_date', axis=1)
+            
+            df_export.to_excel(writer, sheet_name='데이터', index=False)
+            
+            # 요약 시트
+            summary_data = []
+            summary_data.append(['항목', '값'])
+            summary_data.append(['총 레코드 수', len(df)])
+            summary_data.append(['총 요금', f"{df['최종합계'].sum():,} 원"])
+            summary_data.append(['평균 요금', f"{df['최종합계'].mean():.0f} 원"])
+            summary_data.append(['총 회선 수', df['전화번호'].nunique()])
+            summary_data.append(['지점 수', df['지점명'].nunique()])
+            
+            # 기본료만 발생 회선
+            basic_only = len(df[df['사용요금계'] == df['기본료']])
+            summary_data.append(['기본료만 발생 회선', f"{basic_only} 개"])
+            
+            summary_df = pd.DataFrame(summary_data[1:], columns=summary_data[0])
+            summary_df.to_excel(writer, sheet_name='요약', index=False)
+            
+            # 지점별 통계
+            if not df.empty:
+                branch_stats = df.groupby('지점명').agg({
+                    '최종합계': ['sum', 'mean', 'count'],
+                    '부가서비스료': 'sum'
+                }).round(0)
+                
+                branch_stats.columns = ['총요금', '평균요금', '회선수', '부가서비스료합계']
+                branch_stats = branch_stats.sort_values('총요금', ascending=False)
+                branch_stats.to_excel(writer, sheet_name='지점별_통계')
+        
+        output.seek(0)
+        return output
+        
+    except Exception as e:
+        print(f"Excel 생성 오류: {e}")
+        raise
+
+def create_branch_excel_report(branch_df, branch_name):
+    """지점별 상세 Excel 리포트 생성"""
+    try:
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # 상세 데이터
+            df_export = branch_df.copy()
+            if '청구월_date' in df_export.columns:
+                df_export = df_export.drop('청구월_date', axis=1)
+            
+            df_export.to_excel(writer, sheet_name=f'{branch_name}_상세데이터', index=False)
+            
+            # 월별 통계
+            monthly_stats = branch_df.groupby('청구월').agg({
+                '최종합계': ['sum', 'mean', 'count'],
+                '부가서비스료': 'sum',
+                '기본료': 'sum'
+            }).round(0)
+            
+            monthly_stats.columns = ['총요금', '평균요금', '회선수', '부가서비스료', '기본료합계']
+            monthly_stats.to_excel(writer, sheet_name='월별_통계')
+            
+            # 회선별 통계
+            phone_stats = branch_df.groupby('전화번호').agg({
+                '최종합계': ['sum', 'mean', 'count'],
+                '부가서비스료': 'sum'
+            }).round(0)
+            
+            phone_stats.columns = ['총요금', '평균요금', '청구횟수', '부가서비스료합계']
+            phone_stats = phone_stats.sort_values('총요금', ascending=False)
+            phone_stats.to_excel(writer, sheet_name='회선별_통계')
+        
+        output.seek(0)
+        return output
+        
+    except Exception as e:
+        print(f"지점 Excel 리포트 생성 오류: {e}")
+        raise
+
+def create_pdf_report(report_data, report_name):
+    """PDF 리포트 생성 (기본 구조)"""
+    try:
+        # 간단한 텍스트 기반 PDF 생성 (향후 개선 가능)
+        output = io.BytesIO()
+        
+        # 현재는 기본적인 텍스트 파일로 생성
+        # 실제 환경에서는 reportlab 등을 사용하여 PDF 생성
+        content = f"""
+{report_name}
+생성일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+=== 분석 리포트 ===
+
+이 리포트는 전화요금 대시보드에서 생성되었습니다.
+
+상세한 분석 결과는 웹 대시보드에서 확인해주세요.
+        """
+        
+        # 임시로 텍스트 파일로 반환 (PDF 라이브러리 없이)
+        output.write(content.encode('utf-8'))
+        output.seek(0)
+        
+        return output
+        
+    except Exception as e:
+        print(f"PDF 생성 오류: {e}")
+        raise
+
+def prepare_monthly_report_data(df, period, branch):
+    """월간 리포트 데이터 준비"""
+    try:
+        # 기본적인 통계 데이터 준비
+        report_data = {
+            "period": period,
+            "branch": branch,
+            "total_records": len(df),
+            "total_cost": df['최종합계'].sum(),
+            "average_cost": df['최종합계'].mean(),
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        return report_data
+        
+    except Exception as e:
+        print(f"월간 리포트 데이터 준비 오류: {e}")
+        return {}
+
+# ==================== PDF 처리 함수 ====================
 
 def process_pdf(file_path):
     """PDF 파일에서 데이터 추출 (기존 main.py 로직 활용)"""
