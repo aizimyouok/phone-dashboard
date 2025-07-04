@@ -546,19 +546,28 @@ def parse_invoice_data(text):
                 # 전국대표번호는 더 넓은 범위에서 검색 (레이아웃이 다를 수 있음)
                 search_ranges = [3000, 6000, 12000]
                 total_patterns = [
-                    r'합계\s+([\d,]+)\s*원',
-                    r'합 계\s+([\d,]+)\s*원',
-                    r'총합계\s+([\d,]+)\s*원',
+                    r'합계\s+([\d,]+)\s*원',          # 합계 15,246원
+                    r'합 계\s+([\d,]+)\s*원',         # 합 계 15,246원  
+                    r'총합계\s+([\d,]+)\s*원',        # 총합계 15,246원
+                    r'합계\s+([\d,]+)',               # 합계 15246 (원 없이)
+                    r'합\s*계\s+([\d,]+)\s*원',       # 합 계 15,246원 (공백 유연)
+                    r'합[\s\u00a0]*계[\s\u00a0]+([\d,]+)[\s\u00a0]*원',  # 특수문자 대응
+                    r'합.{0,3}계.{0,5}([\d,]+).{0,5}원',  # 매우 유연한 패턴
                 ]
             else:
                 # 070, 02, 080번호는 일반적인 범위에서 검색
                 search_ranges = [2000, 5000, 10000]
                 total_patterns = [
-                    r'합계\s+([\d,]+)\s*원',
-                    r'합 계\s+([\d,]+)\s*원', 
-                    r'총합계\s+([\d,]+)\s*원',
-                    r'소계\s+([\d,]+)\s*원',
-                    r'계\s+([\d,]+)\s*원',
+                    r'합계\s+([\d,]+)\s*원',          # 합계 15,246원
+                    r'합 계\s+([\d,]+)\s*원',         # 합 계 15,246원
+                    r'총합계\s+([\d,]+)\s*원',        # 총합계 15,246원  
+                    r'소계\s+([\d,]+)\s*원',          # 소계 15,246원
+                    r'계\s+([\d,]+)\s*원',            # 계 15,246원
+                    r'합계\s+([\d,]+)',               # 합계 15246 (원 없이)
+                    r'합\s*계\s+([\d,]+)\s*원',       # 합 계 15,246원 (공백 유연)
+                    r'최종합계\s+([\d,]+)\s*원',      # 최종합계 15,246원
+                    r'합[\s\u00a0]*계[\s\u00a0]+([\d,]+)[\s\u00a0]*원',  # 특수문자 대응
+                    r'합.{0,3}계.{0,5}([\d,]+).{0,5}원',  # 매우 유연한 패턴
                 ]
             
             # 다양한 범위와 패턴으로 합계 금액 찾기 시도
@@ -599,10 +608,28 @@ def parse_invoice_data(text):
             # 합계를 찾지 못한 경우 디버깅 정보 출력
             if not total_found:
                 print(f"  ❌ {pattern_name} {phone_number} 합계 찾기 실패")
-                print(f"     검색한 텍스트 앞부분: {text[start_pos:start_pos+500][:200]}...")
-                # 첫 3개 시도만 출력
-                for attempt in debug_attempts[:3]:
-                    print(f"     {attempt}")
+                
+                # 검색 텍스트에서 "합계" 주변 텍스트 찾기
+                search_text = text[start_pos:start_pos + 3000]
+                import re
+                hap_gye_matches = list(re.finditer(r'합\s*계', search_text))
+                
+                if hap_gye_matches:
+                    print(f"     검색 범위 내 '합계' 발견: {len(hap_gye_matches)}개")
+                    for i, match in enumerate(hap_gye_matches[:3]):  # 최대 3개만
+                        start = max(0, match.start() - 100)
+                        end = min(len(search_text), match.end() + 200)
+                        context = search_text[start:end].replace('\n', ' ').strip()
+                        print(f"     합계 {i+1}: ...{context}...")
+                else:
+                    print(f"     검색 범위 내 '합계' 없음")
+                
+                # 숫자 + 원 패턴 찾기
+                won_matches = re.findall(r'([\d,]+)\s*원', search_text[:1000])
+                if won_matches:
+                    print(f"     발견된 금액들: {won_matches[:10]}")
+                
+                print(f"     검색한 텍스트 앞부분 (500자): {search_text[:500]}...")
             else:
                 print(f"  ✅ {pattern_name} {phone_number} 파싱 성공")
                 # 성공한 경우만 출력
@@ -1098,142 +1125,167 @@ def upload_pdf():
         print(f"덮어쓰기 옵션: {overwrite}")
         
         if file and file.filename.lower().endswith('.pdf'):
-            # 임시 파일로 저장
+            # 임시 파일로 저장 및 안전한 처리
             import tempfile
             import os
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                file.save(tmp_file.name)
+            import time
+            
+            tmp_file_path = None
+            try:
+                # 임시 파일 생성 (자동 삭제 비활성화)
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    tmp_file_path = tmp_file.name
+                    file.save(tmp_file_path)
                 
-                # PDF 처리
-                invoice_data, billing_month = process_pdf(tmp_file.name)
+                # PDF 처리 (파일을 완전히 닫은 후)
+                invoice_data, billing_month = process_pdf(tmp_file_path)
                 
-                # 디버깅: PDF 텍스트도 브라우저로 전송
-                with open(tmp_file.name, 'rb') as debug_file:
-                    reader = pypdf.PdfReader(debug_file)
-                    debug_text = "".join(page.extract_text() for page in reader.pages)
-                    
-                # 임시 파일 삭제
-                os.unlink(tmp_file.name)
+                # 디버깅: PDF 텍스트 추출 (별도 프로세스로)
+                debug_text = ""
+                try:
+                    with open(tmp_file_path, 'rb') as debug_file:
+                        reader = pypdf.PdfReader(debug_file)
+                        debug_text = "".join(page.extract_text() for page in reader.pages)
+                except Exception as e:
+                    print(f"디버깅 텍스트 추출 실패: {e}")
+                    debug_text = "텍스트 추출 실패"
                 
-                if invoice_data:
-                    # 구글 시트에 업데이트 (덮어쓰기 옵션 포함)
-                    update_result = dashboard.update_spreadsheet_data(invoice_data, billing_month, overwrite)
-                    
-                    # 디버깅: 파싱된 전화번호 목록 생성
-                    parsed_phones = [data.get('전화번호', 'Unknown') for data in invoice_data]
-                    print(f"브라우저로 전송할 파싱 결과: {parsed_phones}")
-                    
-                    # 디버깅: PDF 텍스트 일부도 전송 (처음 2000문자)
-                    import re
-                    
-                    # 패턴별 파싱 성공률 계산
-                    pattern_stats = {}
-                    for data in invoice_data:
-                        phone = data.get('전화번호', '')
-                        if '070)**' in phone:
-                            pattern_type = '070번호'
-                        elif '02)**' in phone:
-                            pattern_type = '02번호'
-                        elif '080)**' in phone:
-                            pattern_type = '080번호'
-                        elif '**' in phone:
-                            pattern_type = '전국대표번호'
-                        else:
-                            pattern_type = '기타'
-                        
-                        if pattern_type not in pattern_stats:
-                            pattern_stats[pattern_type] = {'found': 0, 'parsed': 0}
-                        pattern_stats[pattern_type]['parsed'] += 1
-                    
-                    # 발견된 전체 패턴 수 계산
-                    total_patterns = {
-                        "전국대표번호": len(re.findall(r'\*\*\d{2}-\d{4}', debug_text)),
-                        "070번호": len(re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)),
-                        "02번호": len(re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)),
-                        "080번호": len(re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text))
-                    }
-                    
-                    # 패턴별 성공률 계산
-                    for pattern_type, count in total_patterns.items():
-                        if pattern_type not in pattern_stats:
-                            pattern_stats[pattern_type] = {'found': count, 'parsed': 0}
-                        else:
-                            pattern_stats[pattern_type]['found'] = count
-                    
-                    debug_info = {
-                        "text_preview": debug_text[:3000],  # 더 긴 미리보기
-                        "text_length": len(debug_text),
-                        "contains_star_star": "**" in debug_text,
-                        "contains_02": "02)**" in debug_text,
-                        "contains_080": "080)**" in debug_text,
-                        "pattern_matches": total_patterns,
-                        "pattern_parsing_stats": pattern_stats,  # 패턴별 파싱 성공률 추가
-                        "sample_matches": {
-                            "전국대표번호": re.findall(r'\*\*\d{2}-\d{4}', debug_text)[:10],
-                            "070번호": re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)[:10],
-                            "02번호": re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)[:10],
-                            "080번호": re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text)[:10]
-                        },
-                        "sample_text_around_patterns": {}  # 패턴 주변 텍스트 샘플
-                    }
-                    
-                    # 각 패턴 주변 텍스트 샘플 추가 (디버깅용)
-                    for pattern_name, pattern_regex in [
-                        ('전국대표번호', r'\*\*\d{2}-\d{4}'),
-                        ('070번호', r'070\)\*\*\d{2}-\d{4}'),
-                        ('02번호', r'02\)\*\*\d{2}-\d{4}'),
-                        ('080번호', r'080\)\*\*\d{1}-\d{4}')
-                    ]:
-                        matches = list(re.finditer(pattern_regex, debug_text))
-                        if matches:
-                            # 첫 번째 매치 주변 텍스트 (앞뒤 500자씩)
-                            first_match = matches[0]
-                            start = max(0, first_match.start() - 200)
-                            end = min(len(debug_text), first_match.end() + 1000)
-                            debug_info["sample_text_around_patterns"][pattern_name] = debug_text[start:end]
-                    
-                    if update_result.get("duplicate") and not overwrite:
-                        # 중복 데이터 발견 - 상세 정보 제공
-                        duplicate_details = []
-                        for dup in update_result.get("duplicates", []):
-                            new_data = dup['new']
-                            existing_data = dup['existing']
-                            duplicate_details.append({
-                                "phone": new_data['전화번호'],
-                                "amount": new_data['최종합계'],
-                                "existing_branch": existing_data.get('지점명', '알 수 없음')
-                            })
-                        
-                        return jsonify({
-                            "duplicate": True,
-                            "billing_month": billing_month,
-                            "message": f"{billing_month} 청구월에서 {len(duplicate_details)}건의 중복 발견",
-                            "existing_count": len(duplicate_details),
-                            "new_data_count": len(invoice_data),
-                            "duplicate_details": duplicate_details[:5],  # 최대 5개까지만 표시
-                            "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
-                            "debug_info": debug_info  # PDF 텍스트 디버깅 정보
-                        })
-                    elif update_result["success"]:
-                        # 성공
-                        message = f"{len(invoice_data)}개의 데이터가 처리되었습니다"
-                        if update_result.get("overwritten"):
-                            message += " (기존 데이터 덮어쓰기 완료)"
-                        
-                        return jsonify({
-                            "success": True,
-                            "message": message,
-                            "billing_month": billing_month,
-                            "data_count": len(invoice_data),
-                            "overwritten": update_result.get("overwritten", False),
-                            "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
-                            "debug_info": debug_info  # PDF 텍스트 디버깅 정보
-                        })
+            except Exception as e:
+                print(f"PDF 처리 중 오류: {e}")
+                return jsonify({"error": f"PDF 처리 실패: {str(e)}"})
+            
+            finally:
+                # 임시 파일 안전한 삭제
+                if tmp_file_path and os.path.exists(tmp_file_path):
+                    try:
+                        # 파일 삭제 전 잠시 대기 (Windows 파일 락 해제)
+                        time.sleep(0.5)
+                        os.unlink(tmp_file_path)
+                        print(f"임시 파일 삭제 완료: {tmp_file_path}")
+                    except Exception as delete_error:
+                        print(f"임시 파일 삭제 실패 (무시함): {delete_error}")
+                        # 삭제 실패해도 프로그램은 계속 진행
+            
+            # PDF 처리 결과 확인 및 응답 생성
+            if invoice_data:
+                # 구글 시트에 업데이트 (덮어쓰기 옵션 포함)
+                update_result = dashboard.update_spreadsheet_data(invoice_data, billing_month, overwrite)
+                
+                # 디버깅: 파싱된 전화번호 목록 생성
+                parsed_phones = [data.get('전화번호', 'Unknown') for data in invoice_data]
+                print(f"브라우저로 전송할 파싱 결과: {parsed_phones}")
+                
+                # 디버깅: PDF 텍스트 일부도 전송 (처음 2000문자)
+                import re
+                
+                # 패턴별 파싱 성공률 계산
+                pattern_stats = {}
+                for data in invoice_data:
+                    phone = data.get('전화번호', '')
+                    if '070)**' in phone:
+                        pattern_type = '070번호'
+                    elif '02)**' in phone:
+                        pattern_type = '02번호'
+                    elif '080)**' in phone:
+                        pattern_type = '080번호'
+                    elif '**' in phone:
+                        pattern_type = '전국대표번호'
                     else:
-                        # 실패
-                        return jsonify({"error": update_result.get("error", "알 수 없는 오류")})
+                        pattern_type = '기타'
+                    
+                    if pattern_type not in pattern_stats:
+                        pattern_stats[pattern_type] = {'found': 0, 'parsed': 0}
+                    pattern_stats[pattern_type]['parsed'] += 1
+                    
+                # 발견된 전체 패턴 수 계산
+                total_patterns = {
+                    "전국대표번호": len(re.findall(r'\*\*\d{2}-\d{4}', debug_text)),
+                    "070번호": len(re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)),
+                    "02번호": len(re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)),
+                    "080번호": len(re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text))
+                }
+                
+                # 패턴별 성공률 계산
+                for pattern_type, count in total_patterns.items():
+                    if pattern_type not in pattern_stats:
+                        pattern_stats[pattern_type] = {'found': count, 'parsed': 0}
+                    else:
+                        pattern_stats[pattern_type]['found'] = count
+                
+                debug_info = {
+                    "text_preview": debug_text[:3000],  # 더 긴 미리보기
+                    "text_length": len(debug_text),
+                    "contains_star_star": "**" in debug_text,
+                    "contains_02": "02)**" in debug_text,
+                    "contains_080": "080)**" in debug_text,
+                    "pattern_matches": total_patterns,
+                    "pattern_parsing_stats": pattern_stats,  # 패턴별 파싱 성공률 추가
+                    "sample_matches": {
+                        "전국대표번호": re.findall(r'\*\*\d{2}-\d{4}', debug_text)[:10],
+                        "070번호": re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)[:10],
+                        "02번호": re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)[:10],
+                        "080번호": re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text)[:10]
+                    },
+                    "sample_text_around_patterns": {}  # 패턴 주변 텍스트 샘플
+                }
+                
+                # 각 패턴 주변 텍스트 샘플 추가 (디버깅용)
+                for pattern_name, pattern_regex in [
+                    ('전국대표번호', r'\*\*\d{2}-\d{4}'),
+                    ('070번호', r'070\)\*\*\d{2}-\d{4}'),
+                    ('02번호', r'02\)\*\*\d{2}-\d{4}'),
+                    ('080번호', r'080\)\*\*\d{1}-\d{4}')
+                ]:
+                    matches = list(re.finditer(pattern_regex, debug_text))
+                    if matches:
+                        # 첫 번째 매치 주변 텍스트 (앞뒤 500자씩)
+                        first_match = matches[0]
+                        start = max(0, first_match.start() - 200)
+                        end = min(len(debug_text), first_match.end() + 1000)
+                        debug_info["sample_text_around_patterns"][pattern_name] = debug_text[start:end]
+                
+                if update_result.get("duplicate") and not overwrite:
+                    # 중복 데이터 발견 - 상세 정보 제공
+                    duplicate_details = []
+                    for dup in update_result.get("duplicates", []):
+                        new_data = dup['new']
+                        existing_data = dup['existing']
+                        duplicate_details.append({
+                            "phone": new_data['전화번호'],
+                            "amount": new_data['최종합계'],
+                            "existing_branch": existing_data.get('지점명', '알 수 없음')
+                        })
+                    
+                    return jsonify({
+                        "duplicate": True,
+                        "billing_month": billing_month,
+                        "message": f"{billing_month} 청구월에서 {len(duplicate_details)}건의 중복 발견",
+                        "existing_count": len(duplicate_details),
+                        "new_data_count": len(invoice_data),
+                        "duplicate_details": duplicate_details[:5],  # 최대 5개까지만 표시
+                        "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
+                        "debug_info": debug_info  # PDF 텍스트 디버깅 정보
+                    })
+                elif update_result["success"]:
+                    # 성공
+                    message = f"{len(invoice_data)}개의 데이터가 처리되었습니다"
+                    if update_result.get("overwritten"):
+                        message += " (기존 데이터 덮어쓰기 완료)"
+                    
+                    return jsonify({
+                        "success": True,
+                        "message": message,
+                        "billing_month": billing_month,
+                        "data_count": len(invoice_data),
+                        "overwritten": update_result.get("overwritten", False),
+                        "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
+                        "debug_info": debug_info  # PDF 텍스트 디버깅 정보
+                    })
                 else:
-                    return jsonify({"error": "PDF에서 데이터를 추출할 수 없습니다"})
+                    # 실패
+                    return jsonify({"error": update_result.get("error", "알 수 없는 오류")})
+            else:
+                return jsonify({"error": "PDF에서 데이터를 추출할 수 없습니다"})
         else:
             return jsonify({"error": "PDF 파일만 업로드 가능합니다"})
             
