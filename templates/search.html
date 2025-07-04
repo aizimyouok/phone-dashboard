@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}상세 검색 - 전화요금 관리 시스템{% endblock %}
+{% block title %}상세 검색 - CFC 회선 및 요금 관리 시스템{% endblock %}
 
 {% block content %}
     <!-- 통합검색 및 필터 -->
@@ -208,12 +208,6 @@
         const type = document.getElementById('type-filter').value;
         const phone = document.getElementById('phone-search').value.trim();
         
-        // 모든 필터가 기본값이면 경고
-        if (branch === 'all' && month === 'all' && type === 'all' && !phone) {
-            alert('최소 하나의 필터를 선택하거나 전화번호를 입력해주세요.');
-            return;
-        }
-        
         try {
             showSearchStatus('필터 적용 중...', 'loading');
             
@@ -240,11 +234,14 @@
             if (type !== 'all') filterDesc.push(`유형: ${type === 'basic' ? '기본료만' : '부가서비스'}`);
             if (phone) filterDesc.push(`전화번호: ${phone}`);
             
+            // 필터 설명이 없으면 "전체 데이터"로 표시
+            const description = filterDesc.length > 0 ? filterDesc.join(', ') : '전체 데이터';
+            
             // 필터링된 KPI 업데이트
-            updateFilteredKPI(result.kpi, filterDesc.join(', '));
+            updateFilteredKPI(result.kpi, description);
             
             // 검색 결과 표시
-            displaySearchResults(result.data, `고급필터: ${filterDesc.join(', ')}`);
+            displaySearchResults(result.data, `고급필터: ${description}`);
             
             showSearchStatus(`✅ 필터 완료: ${result.total}건`, 'success');
             

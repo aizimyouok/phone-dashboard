@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}대시보드 - 전화요금 관리 시스템{% endblock %}
+{% block title %}대시보드 - CFC 회선 및 요금 관리 시스템{% endblock %}
 
 {% block content %}
     <!-- PDF 업로드 및 데이터 관리 -->
@@ -24,17 +24,16 @@
         <div class="filter-row">
             <div class="filter-group">
                 <label>지점</label>
-                <select id="branch-filter">
+                <select id="branch-filter" onchange="applyDashboardFilter()">
                     <option value="all">전체 지점</option>
                 </select>
             </div>
             <div class="filter-group">
                 <label>청구월</label>
-                <select id="month-filter">
+                <select id="month-filter" onchange="applyDashboardFilter()">
                     <option value="all">전체 월</option>
                 </select>
             </div>
-            <button class="btn btn-primary" onclick="applyDashboardFilter()">필터 적용</button>
             <button class="btn btn-secondary" onclick="resetDashboardFilter()">초기화</button>
         </div>
     </section>
