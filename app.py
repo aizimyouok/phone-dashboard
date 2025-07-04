@@ -547,6 +547,8 @@ def parse_invoice_data(text):
                 search_ranges = [3000, 6000, 12000]
                 total_patterns = [
                     r'합계\s+([\d,]+)\s*원',          # 합계 15,246원
+                    r'합계\s+(\d+)\s+원',             # 합계  1089 원 (실제 형태)
+                    r'합계\s+(\d{1,3}(?:,\d{3})*)\s*원', # 합계 1,089원
                     r'합 계\s+([\d,]+)\s*원',         # 합 계 15,246원  
                     r'총합계\s+([\d,]+)\s*원',        # 총합계 15,246원
                     r'합계\s+([\d,]+)',               # 합계 15246 (원 없이)
@@ -559,6 +561,8 @@ def parse_invoice_data(text):
                 search_ranges = [2000, 5000, 10000]
                 total_patterns = [
                     r'합계\s+([\d,]+)\s*원',          # 합계 15,246원
+                    r'합계\s+(\d+)\s+원',             # 합계  1089 원 (실제 형태)
+                    r'합계\s+(\d{1,3}(?:,\d{3})*)\s*원', # 합계 1,089원 
                     r'합 계\s+([\d,]+)\s*원',         # 합 계 15,246원
                     r'총합계\s+([\d,]+)\s*원',        # 총합계 15,246원  
                     r'소계\s+([\d,]+)\s*원',          # 소계 15,246원
@@ -580,7 +584,12 @@ def parse_invoice_data(text):
                 for total_pattern in total_patterns:
                     total_match = re.search(total_pattern, remaining_text)
                     if total_match:
-                        total_amount = int(total_match.group(1).replace(',', ''))
+                        total_amount_str = total_match.group(1).replace(',', '')
+                        try:
+                            total_amount = int(total_amount_str)
+                        except ValueError:
+                            debug_attempts.append(f"실패: {pattern_name} {phone_number} 금액 변환 실패 '{total_amount_str}'")
+                            continue
                         
                         # 디버깅을 위한 정보 저장
                         debug_attempts.append(f"성공: {pattern_name} {phone_number} -> {total_amount}원 (범위:{search_range}, 패턴:{total_pattern})")
@@ -598,9 +607,12 @@ def parse_invoice_data(text):
                         pattern_parsed += 1
                         total_parsed += 1
                         total_found = True
+                        
+                        # 성공 시 즉시 디버깅 정보 출력
+                        print(f"  ✅ {pattern_name} {phone_number} 파싱 성공 -> {total_amount}원")
                         break
                     else:
-                        debug_attempts.append(f"실패: {pattern_name} {phone_number} (범위:{search_range}, 패턴:{total_pattern})")
+                        debug_attempts.append(f"실패: {pattern_name} {phone_number} (범위:{search_range}, 패턴:{total_pattern}) - 매칭 없음")
                 
                 if total_found:
                     break
@@ -612,15 +624,38 @@ def parse_invoice_data(text):
                 # 검색 텍스트에서 "합계" 주변 텍스트 찾기
                 search_text = text[start_pos:start_pos + 3000]
                 import re
-                hap_gye_matches = list(re.finditer(r'합\s*계', search_text))
                 
-                if hap_gye_matches:
-                    print(f"     검색 범위 내 '합계' 발견: {len(hap_gye_matches)}개")
-                    for i, match in enumerate(hap_gye_matches[:3]):  # 최대 3개만
+                # "합계" 패턴 찾기 (다양한 형태)
+                hap_gye_patterns = [
+                    r'합\s*계',
+                    r'합계',
+                    r'합[\s\u00a0]*계',
+                    r'합.{0,3}계'
+                ]
+                
+                all_hap_gye_matches = []
+                for pattern in hap_gye_patterns:
+                    matches = list(re.finditer(pattern, search_text))
+                    all_hap_gye_matches.extend(matches)
+                
+                if all_hap_gye_matches:
+                    print(f"     검색 범위 내 '합계' 발견: {len(all_hap_gye_matches)}개")
+                    for i, match in enumerate(all_hap_gye_matches[:3]):  # 최대 3개만
                         start = max(0, match.start() - 100)
                         end = min(len(search_text), match.end() + 200)
                         context = search_text[start:end].replace('\n', ' ').strip()
                         print(f"     합계 {i+1}: ...{context}...")
+                        
+                        # 16진수로 실제 문자 확인 (디버깅용)
+                        actual_text = search_text[match.start():match.end() + 50]
+                        hex_text = ' '.join(f'{ord(c):02x}' for c in actual_text[:20])
+                        print(f"     16진수: {hex_text}")
+                        
+                        # 이 "합계" 뒤에 숫자 패턴이 있는지 확인
+                        after_match = search_text[match.end():match.end() + 100]
+                        number_matches = re.findall(r'([\d,]+)', after_match)
+                        if number_matches:
+                            print(f"     합계 뒤 숫자들: {number_matches}")
                 else:
                     print(f"     검색 범위 내 '합계' 없음")
                 
@@ -1180,22 +1215,31 @@ def upload_pdf():
                 
                 # 패턴별 파싱 성공률 계산
                 pattern_stats = {}
+                print(f"디버깅: 파싱된 데이터 수 = {len(invoice_data)}")
+                
                 for data in invoice_data:
                     phone = data.get('전화번호', '')
-                    if '070)**' in phone:
+                    print(f"디버깅: 파싱된 전화번호 = '{phone}'")
+                    
+                    # 패턴 분류 로직 수정 (더 정확하게)
+                    if phone.startswith('070)'):
                         pattern_type = '070번호'
-                    elif '02)**' in phone:
+                    elif phone.startswith('02)'):
                         pattern_type = '02번호'
-                    elif '080)**' in phone:
+                    elif phone.startswith('080)'):
                         pattern_type = '080번호'
-                    elif '**' in phone:
+                    elif phone.startswith('**'):
                         pattern_type = '전국대표번호'
                     else:
                         pattern_type = '기타'
+                        print(f"디버깅: 알 수 없는 패턴 = '{phone}'")
                     
                     if pattern_type not in pattern_stats:
                         pattern_stats[pattern_type] = {'found': 0, 'parsed': 0}
                     pattern_stats[pattern_type]['parsed'] += 1
+                    print(f"디버깅: {pattern_type}으로 분류됨")
+                
+                print(f"디버깅: 최종 pattern_stats = {pattern_stats}")
                     
                 # 발견된 전체 패턴 수 계산
                 total_patterns = {
