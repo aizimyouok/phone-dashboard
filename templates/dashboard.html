@@ -550,6 +550,15 @@
                 console.log('파싱된 전화번호 목록:', result.parsed_phones);
                 console.log('파싱된 전화번호 개수:', result.parsed_phones.length);
             }
+            if (result.debug_info) {
+                console.log('=== PDF 텍스트 추출 디버깅 ===');
+                console.log('텍스트 길이:', result.debug_info.text_length);
+                console.log('** 패턴 포함 여부:', result.debug_info.contains_star_star);
+                console.log('02)** 패턴 포함 여부:', result.debug_info.contains_02);
+                console.log('080)** 패턴 포함 여부:', result.debug_info.contains_080);
+                console.log('PDF 텍스트 미리보기 (처음 2000문자):');
+                console.log(result.debug_info.text_preview);
+            }
             console.log('==================');
             
             if (result.duplicate && !overwrite) {

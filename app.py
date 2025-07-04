@@ -1020,6 +1020,11 @@ def upload_pdf():
                 # PDF 처리
                 invoice_data, billing_month = process_pdf(tmp_file.name)
                 
+                # 디버깅: PDF 텍스트도 브라우저로 전송
+                with open(tmp_file.name, 'rb') as debug_file:
+                    reader = pypdf.PdfReader(debug_file)
+                    debug_text = "".join(page.extract_text() for page in reader.pages)
+                    
                 # 임시 파일 삭제
                 os.unlink(tmp_file.name)
                 
@@ -1030,6 +1035,15 @@ def upload_pdf():
                     # 디버깅: 파싱된 전화번호 목록 생성
                     parsed_phones = [data.get('전화번호', 'Unknown') for data in invoice_data]
                     print(f"브라우저로 전송할 파싱 결과: {parsed_phones}")
+                    
+                    # 디버깅: PDF 텍스트 일부도 전송 (처음 2000문자)
+                    debug_info = {
+                        "text_preview": debug_text[:2000],
+                        "text_length": len(debug_text),
+                        "contains_star_star": "**" in debug_text,
+                        "contains_02": "02)**" in debug_text,
+                        "contains_080": "080)**" in debug_text
+                    }
                     
                     if update_result.get("duplicate") and not overwrite:
                         # 중복 데이터 발견 - 상세 정보 제공
@@ -1050,7 +1064,8 @@ def upload_pdf():
                             "existing_count": len(duplicate_details),
                             "new_data_count": len(invoice_data),
                             "duplicate_details": duplicate_details[:5],  # 최대 5개까지만 표시
-                            "parsed_phones": parsed_phones  # 파싱된 전화번호 목록 추가
+                            "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
+                            "debug_info": debug_info  # PDF 텍스트 디버깅 정보
                         })
                     elif update_result["success"]:
                         # 성공
@@ -1064,7 +1079,8 @@ def upload_pdf():
                             "billing_month": billing_month,
                             "data_count": len(invoice_data),
                             "overwritten": update_result.get("overwritten", False),
-                            "parsed_phones": parsed_phones  # 파싱된 전화번호 목록 추가
+                            "parsed_phones": parsed_phones,  # 파싱된 전화번호 목록 추가
+                            "debug_info": debug_info  # PDF 텍스트 디버깅 정보
                         })
                     else:
                         # 실패
