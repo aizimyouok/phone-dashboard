@@ -490,63 +490,141 @@ def get_billing_month(text):
     return "날짜모름"
 
 def parse_invoice_data(text):
-    """PDF 텍스트에서 청구 데이터를 파싱합니다. (단순하고 확실한 버전)"""
+    """PDF 텍스트에서 청구 데이터를 파싱합니다. (중복 제거 및 개선된 버전)"""
     parsed_data = []
+    processed_suffixes = set()  # 중복 방지를 위한 세트
     
-    print("=== PDF 파싱 시작 ===")
+    print("=== PDF 파싱 시작 (중복 제거 버전) ===")
     print(f"입력 텍스트 길이: {len(text)} 문자")
     
-    # 전체 텍스트에서 전화번호와 합계 금액을 직접 추출
-    # 각 전화번호 패턴과 그 뒤의 합계 금액을 찾음
-    
-    # 전화번호 패턴들 (PDF에서 실제 나타나는 형태) - 더 단순하고 정확한 패턴
+    # 전화번호 패턴들 우선순위 순으로 정렬 (더 구체적인 패턴을 먼저)
     phone_patterns = [
-        (r'\*\*\d{2}-\d{4}', '전국대표번호'),           # **99-2593, **00-1631 (전국대표번호)
-        (r'070\)\*\*\d{2}-\d{4}', '070번호'),      # 070)**03-2573 (070번호)
-        (r'02\)\*\*\d{2}-\d{4}', '02번호'),       # 02)**35-6493 (02번호)
-        (r'080\)\*\*\d{1}-\d{4}', '080번호'),      # 080)**0-7100 (080번호)
+        (r'070\)\*\*\d{2}-\d{4}', '070번호'),      # 070)**03-2573 (070번호) - 우선순위 1
+        (r'02\)\*\*\d{2}-\d{4}', '02번호'),       # 02)**35-6493 (02번호) - 우선순위 2  
+        (r'080\)\*\*\d{1}-\d{4}', '080번호'),      # 080)**0-7100 (080번호) - 우선순위 3
+        (r'\*\*\d{2}-\d{4}', '전국대표번호'),           # **99-2593, **00-1631 (전국대표번호) - 우선순위 4
     ]
     
-    print("=== 패턴별 매칭 결과 ===")
+    print("=== 패턴별 매칭 및 중복 제거 결과 ===")
     total_parsed = 0
+    pattern_stats = {}
+    
     # 각 패턴별로 전화번호를 찾고 데이터를 추출
     for pattern, pattern_name in phone_patterns:
         matches = list(re.finditer(pattern, text))
-        print(f"{pattern_name} 패턴 '{pattern}': {len(matches)}개 매칭")
+        print(f"{pattern_name} 패턴: {len(matches)}개 발견")
         pattern_parsed = 0
+        pattern_skipped = 0
         
         for i, match in enumerate(matches):
-            phone_number = match.group(0)  # 전체 매칭된 문자열
-            print(f"  {i+1}. 발견된 전화번호: {phone_number}")
+            phone_number = match.group(0)
+            
+            # 뒷자리 추출로 중복 체크
+            suffix = None
+            if pattern_name == '070번호':
+                suffix = phone_number.replace('070)**', '')  # 03-2573
+            elif pattern_name == '02번호':
+                suffix = phone_number.replace('02)**', '')   # 35-6493
+            elif pattern_name == '080번호':
+                suffix = phone_number.replace('080)**', '')  # 0-7100
+            elif pattern_name == '전국대표번호':
+                suffix = phone_number.replace('**', '')      # 99-2593
+            
+            # 중복 체크
+            if suffix in processed_suffixes:
+                pattern_skipped += 1
+                continue
             
             # 전화번호 위치에서 그 뒤의 텍스트를 가져와서 합계 금액 찾기
             start_pos = match.end()
-            remaining_text = text[start_pos:start_pos + 2000]  # 전화번호 뒤 2000자
             
-            # 해당 전화번호의 합계 금액 찾기 (가장 가까운 "합계 XXX원")
-            total_match = re.search(r'합계\s+([\d,]+)\s*원', remaining_text)
+            # 패턴별 맞춤형 검색 범위와 합계 패턴 설정
+            search_ranges = []
+            total_patterns = []
             
-            if total_match:
-                total_amount = int(total_match.group(1).replace(',', ''))
-                print(f"     → 합계: {total_amount}원")
-                
-                # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
-                detail_text = remaining_text[:total_match.end()]
-                amounts = extract_amounts_from_content(detail_text)
-                amounts['최종합계'] = total_amount
-                amounts['전화번호'] = phone_number
-                
-                parsed_data.append(amounts)
-                pattern_parsed += 1
-                total_parsed += 1
-                print(f"     → 파싱 완료: {phone_number} ({total_amount}원)")
+            if pattern_name == '전국대표번호':
+                # 전국대표번호는 더 넓은 범위에서 검색 (레이아웃이 다를 수 있음)
+                search_ranges = [3000, 6000, 12000]
+                total_patterns = [
+                    r'합계\s+([\d,]+)\s*원',
+                    r'합 계\s+([\d,]+)\s*원',
+                    r'총합계\s+([\d,]+)\s*원',
+                ]
             else:
-                print(f"     → 합계 금액 찾을 수 없음 - 건너뜀")
+                # 070, 02, 080번호는 일반적인 범위에서 검색
+                search_ranges = [2000, 5000, 10000]
+                total_patterns = [
+                    r'합계\s+([\d,]+)\s*원',
+                    r'합 계\s+([\d,]+)\s*원', 
+                    r'총합계\s+([\d,]+)\s*원',
+                    r'소계\s+([\d,]+)\s*원',
+                    r'계\s+([\d,]+)\s*원',
+                ]
+            
+            # 다양한 범위와 패턴으로 합계 금액 찾기 시도
+            total_found = False
+            debug_attempts = []
+            
+            for search_range in search_ranges:
+                remaining_text = text[start_pos:start_pos + search_range]
+                
+                for total_pattern in total_patterns:
+                    total_match = re.search(total_pattern, remaining_text)
+                    if total_match:
+                        total_amount = int(total_match.group(1).replace(',', ''))
+                        
+                        # 디버깅을 위한 정보 저장
+                        debug_attempts.append(f"성공: {pattern_name} {phone_number} -> {total_amount}원 (범위:{search_range}, 패턴:{total_pattern})")
+                        
+                        # 중복 방지를 위해 뒷자리 기록
+                        processed_suffixes.add(suffix)
+                        
+                        # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
+                        detail_text = remaining_text[:total_match.end()]
+                        amounts = extract_amounts_from_content(detail_text)
+                        amounts['최종합계'] = total_amount
+                        amounts['전화번호'] = phone_number
+                        
+                        parsed_data.append(amounts)
+                        pattern_parsed += 1
+                        total_parsed += 1
+                        total_found = True
+                        break
+                    else:
+                        debug_attempts.append(f"실패: {pattern_name} {phone_number} (범위:{search_range}, 패턴:{total_pattern})")
+                
+                if total_found:
+                    break
+            
+            # 합계를 찾지 못한 경우 디버깅 정보 출력
+            if not total_found:
+                print(f"  ❌ {pattern_name} {phone_number} 합계 찾기 실패")
+                print(f"     검색한 텍스트 앞부분: {text[start_pos:start_pos+500][:200]}...")
+                # 첫 3개 시도만 출력
+                for attempt in debug_attempts[:3]:
+                    print(f"     {attempt}")
+            else:
+                print(f"  ✅ {pattern_name} {phone_number} 파싱 성공")
+                # 성공한 경우만 출력
+                for attempt in debug_attempts:
+                    if "성공:" in attempt:
+                        print(f"     {attempt}")
+                        break
         
-        print(f"  {pattern_name}: {pattern_parsed}/{len(matches)}개 파싱 성공")
-        print()
+        pattern_stats[pattern_name] = {
+            'found': len(matches),
+            'parsed': pattern_parsed,
+            'skipped': pattern_skipped
+        }
+        print(f"  → {pattern_parsed}개 파싱 성공, {pattern_skipped}개 중복 제외")
     
-    print(f"=== 파싱 완료: 총 {total_parsed}개 전화번호 추출 (발견: 133개 중) ===")
+    print(f"=== 파싱 완료: 총 {total_parsed}개 전화번호 추출 (중복 제거됨) ===")
+    
+    # 서버 콘솔에 패턴별 파싱 성공률 출력
+    print("\n=== 패턴별 파싱 결과 ===")
+    for pattern_name, stats in pattern_stats.items():
+        print(f"{pattern_name}: {stats['parsed']}/{stats['found']}개 파싱 성공")
+    
     return parsed_data
 
 def extract_phone_number_from_content(content):
@@ -1047,25 +1125,72 @@ def upload_pdf():
                     
                     # 디버깅: PDF 텍스트 일부도 전송 (처음 2000문자)
                     import re
+                    
+                    # 패턴별 파싱 성공률 계산
+                    pattern_stats = {}
+                    for data in invoice_data:
+                        phone = data.get('전화번호', '')
+                        if '070)**' in phone:
+                            pattern_type = '070번호'
+                        elif '02)**' in phone:
+                            pattern_type = '02번호'
+                        elif '080)**' in phone:
+                            pattern_type = '080번호'
+                        elif '**' in phone:
+                            pattern_type = '전국대표번호'
+                        else:
+                            pattern_type = '기타'
+                        
+                        if pattern_type not in pattern_stats:
+                            pattern_stats[pattern_type] = {'found': 0, 'parsed': 0}
+                        pattern_stats[pattern_type]['parsed'] += 1
+                    
+                    # 발견된 전체 패턴 수 계산
+                    total_patterns = {
+                        "전국대표번호": len(re.findall(r'\*\*\d{2}-\d{4}', debug_text)),
+                        "070번호": len(re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)),
+                        "02번호": len(re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)),
+                        "080번호": len(re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text))
+                    }
+                    
+                    # 패턴별 성공률 계산
+                    for pattern_type, count in total_patterns.items():
+                        if pattern_type not in pattern_stats:
+                            pattern_stats[pattern_type] = {'found': count, 'parsed': 0}
+                        else:
+                            pattern_stats[pattern_type]['found'] = count
+                    
                     debug_info = {
-                        "text_preview": debug_text[:2000],
+                        "text_preview": debug_text[:3000],  # 더 긴 미리보기
                         "text_length": len(debug_text),
                         "contains_star_star": "**" in debug_text,
                         "contains_02": "02)**" in debug_text,
                         "contains_080": "080)**" in debug_text,
-                        "pattern_matches": {
-                            "전국대표번호": len(re.findall(r'\*\*\d{2}-\d{4}', debug_text)),
-                            "070번호": len(re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)),
-                            "02번호": len(re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)),
-                            "080번호": len(re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text))
-                        },
+                        "pattern_matches": total_patterns,
+                        "pattern_parsing_stats": pattern_stats,  # 패턴별 파싱 성공률 추가
                         "sample_matches": {
-                            "전국대표번호": re.findall(r'\*\*\d{2}-\d{4}', debug_text)[:5],
-                            "070번호": re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)[:5],
-                            "02번호": re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)[:5],
-                            "080번호": re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text)[:5]
-                        }
+                            "전국대표번호": re.findall(r'\*\*\d{2}-\d{4}', debug_text)[:10],
+                            "070번호": re.findall(r'070\)\*\*\d{2}-\d{4}', debug_text)[:10],
+                            "02번호": re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)[:10],
+                            "080번호": re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text)[:10]
+                        },
+                        "sample_text_around_patterns": {}  # 패턴 주변 텍스트 샘플
                     }
+                    
+                    # 각 패턴 주변 텍스트 샘플 추가 (디버깅용)
+                    for pattern_name, pattern_regex in [
+                        ('전국대표번호', r'\*\*\d{2}-\d{4}'),
+                        ('070번호', r'070\)\*\*\d{2}-\d{4}'),
+                        ('02번호', r'02\)\*\*\d{2}-\d{4}'),
+                        ('080번호', r'080\)\*\*\d{1}-\d{4}')
+                    ]:
+                        matches = list(re.finditer(pattern_regex, debug_text))
+                        if matches:
+                            # 첫 번째 매치 주변 텍스트 (앞뒤 500자씩)
+                            first_match = matches[0]
+                            start = max(0, first_match.start() - 200)
+                            end = min(len(debug_text), first_match.end() + 1000)
+                            debug_info["sample_text_around_patterns"][pattern_name] = debug_text[start:end]
                     
                     if update_result.get("duplicate") and not overwrite:
                         # 중복 데이터 발견 - 상세 정보 제공

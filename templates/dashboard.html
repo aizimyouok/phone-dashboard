@@ -556,11 +556,25 @@
                 console.log('** 패턴 포함 여부:', result.debug_info.contains_star_star);
                 console.log('02)** 패턴 포함 여부:', result.debug_info.contains_02);
                 console.log('080)** 패턴 포함 여부:', result.debug_info.contains_080);
+                
                 console.log('=== 패턴별 매칭 개수 ===');
                 console.log('전국대표번호:', result.debug_info.pattern_matches?.전국대표번호 || 0, '개');
                 console.log('070번호:', result.debug_info.pattern_matches?.['070번호'] || 0, '개');
                 console.log('02번호:', result.debug_info.pattern_matches?.['02번호'] || 0, '개');
                 console.log('080번호:', result.debug_info.pattern_matches?.['080번호'] || 0, '개');
+                
+                console.log('=== 패턴별 파싱 성공률 ===');
+                if (result.debug_info.pattern_parsing_stats) {
+                    Object.entries(result.debug_info.pattern_parsing_stats).forEach(([pattern, stats]) => {
+                        const successRate = stats.found > 0 ? Math.round((stats.parsed / stats.found) * 100) : 0;
+                        console.log(`${pattern}: ${stats.parsed}/${stats.found}개 파싱 성공 (${successRate}%)`);
+                        
+                        if (stats.parsed === 0 && stats.found > 0) {
+                            console.warn(`⚠️ ${pattern} 패턴은 발견되었지만 파싱에 실패했습니다!`);
+                        }
+                    });
+                }
+                
                 console.log('=== 실제 매칭된 전화번호 샘플 ===');
                 if (result.debug_info.sample_matches) {
                     console.log('전국대표번호 샘플:', result.debug_info.sample_matches.전국대표번호);
@@ -568,7 +582,15 @@
                     console.log('02번호 샘플:', result.debug_info.sample_matches['02번호']);
                     console.log('080번호 샘플:', result.debug_info.sample_matches['080번호']);
                 }
-                console.log('PDF 텍스트 미리보기 (처음 2000문자):');
+                
+                console.log('=== 패턴별 주변 텍스트 샘플 (디버깅용) ===');
+                if (result.debug_info.sample_text_around_patterns) {
+                    Object.entries(result.debug_info.sample_text_around_patterns).forEach(([pattern, text]) => {
+                        console.log(`${pattern} 주변 텍스트:`, text.substring(0, 500) + '...');
+                    });
+                }
+                
+                console.log('PDF 텍스트 미리보기 (처음 3000문자):');
                 console.log(result.debug_info.text_preview);
             }
             console.log('==================');
