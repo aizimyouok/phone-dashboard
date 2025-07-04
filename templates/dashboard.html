@@ -590,6 +590,26 @@
                     });
                 }
                 
+                console.log('=== 패턴별 상세 매칭 정보 (문제 진단용) ===');
+                if (result.debug_info.detailed_pattern_matches) {
+                    Object.entries(result.debug_info.detailed_pattern_matches).forEach(([pattern, matches]) => {
+                        console.log(`\n${pattern} 상세 매칭 (${matches.length}개):`);
+                        matches.slice(0, 5).forEach((match, i) => {
+                            console.log(`  ${i+1}. 매칭: '${match.matched}'`);
+                            console.log(`     전후 context: ...${match.context}...`);
+                            console.log(`     위치: ${match.position}`);
+                            
+                            // 문제 패턴 감지 (02번호가 전국대표번호로 잘못 매칭된 경우)
+                            if (pattern === '전국대표번호' && match.context.includes('02)**')) {
+                                console.warn(`     ⚠️ 의심: 02번호가 전국대표번호로 잘못 매칭된 것 같습니다!`);
+                            }
+                            if (pattern === '전국대표번호' && match.context.includes('080)**')) {
+                                console.warn(`     ⚠️ 의심: 080번호가 전국대표번호로 잘못 매칭된 것 같습니다!`);
+                            }
+                        });
+                    });
+                }
+                
                 console.log('PDF 텍스트 미리보기 (처음 3000문자):');
                 console.log(result.debug_info.text_preview);
             }

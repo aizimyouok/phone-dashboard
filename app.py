@@ -502,17 +502,33 @@ def parse_invoice_data(text):
         (r'070\)\*\*\d{2}-\d{4}', '070번호'),      # 070)**03-2573 (070번호) - 우선순위 1
         (r'02\)\*\*\d{2}-\d{4}', '02번호'),       # 02)**35-6493 (02번호) - 우선순위 2  
         (r'080\)\*\*\d{1}-\d{4}', '080번호'),      # 080)**0-7100 (080번호) - 우선순위 3
-        (r'\*\*\d{2}-\d{4}', '전국대표번호'),           # **99-2593, **00-1631 (전국대표번호) - 우선순위 4
+        (r'(?<!\d\)\*)\*\*\d{2}-\d{4}', '전국대표번호'),  # **99-2593 (앞에 숫자)가 없는 경우만) - 우선순위 4
     ]
     
     print("=== 패턴별 매칭 및 중복 제거 결과 ===")
     total_parsed = 0
     pattern_stats = {}
     
+    # 패턴별 상세 매칭 정보를 저장할 딕셔너리
+    detailed_matches = {}
+    
     # 각 패턴별로 전화번호를 찾고 데이터를 추출
     for pattern, pattern_name in phone_patterns:
         matches = list(re.finditer(pattern, text))
-        print(f"{pattern_name} 패턴: {len(matches)}개 발견")
+        print(f"\n{pattern_name} 패턴: {len(matches)}개 발견")
+        
+        # 상세 매칭 정보 저장
+        detailed_matches[pattern_name] = []
+        for match in matches[:10]:  # 최대 10개 샘플
+            start_pos = max(0, match.start() - 50)
+            end_pos = min(len(text), match.end() + 50)
+            context = text[start_pos:end_pos].replace('\n', ' ')
+            detailed_matches[pattern_name].append({
+                'matched': match.group(0),
+                'context': context,
+                'position': match.start()
+            })
+        
         pattern_parsed = 0
         pattern_skipped = 0
         
@@ -686,6 +702,15 @@ def parse_invoice_data(text):
     print("\n=== 패턴별 파싱 결과 ===")
     for pattern_name, stats in pattern_stats.items():
         print(f"{pattern_name}: {stats['parsed']}/{stats['found']}개 파싱 성공")
+    
+    # 패턴별 상세 매칭 정보 출력 (문제 진단용)
+    print("\n=== 패턴별 상세 매칭 정보 (문제 진단용) ===")
+    for pattern_name, matches in detailed_matches.items():
+        print(f"\n{pattern_name} 상세 매칭:")
+        for i, match_info in enumerate(matches[:5], 1):  # 최대 5개만
+            print(f"  {i}. 매칭: '{match_info['matched']}'")
+            print(f"     전후 context: ...{match_info['context']}...")
+            print(f"     위치: {match_info['position']}")
     
     return parsed_data
 
@@ -1270,10 +1295,11 @@ def upload_pdf():
                         "02번호": re.findall(r'02\)\*\*\d{2}-\d{4}', debug_text)[:10],
                         "080번호": re.findall(r'080\)\*\*\d{1}-\d{4}', debug_text)[:10]
                     },
-                    "sample_text_around_patterns": {}  # 패턴 주변 텍스트 샘플
+                    "sample_text_around_patterns": {},  # 패턴 주변 텍스트 샘플
+                    "detailed_pattern_matches": {}  # 패턴별 상세 매칭 정보 (문제 진단용)
                 }
                 
-                # 각 패턴 주변 텍스트 샘플 추가 (디버깅용)
+                # 패턴별 상세 매칭 정보 추가 (브라우저에서 문제 진단용)
                 for pattern_name, pattern_regex in [
                     ('전국대표번호', r'\*\*\d{2}-\d{4}'),
                     ('070번호', r'070\)\*\*\d{2}-\d{4}'),
@@ -1281,8 +1307,21 @@ def upload_pdf():
                     ('080번호', r'080\)\*\*\d{1}-\d{4}')
                 ]:
                     matches = list(re.finditer(pattern_regex, debug_text))
+                    debug_info["detailed_pattern_matches"][pattern_name] = []
+                    
+                    for match in matches[:10]:  # 최대 10개 샘플
+                        start_context = max(0, match.start() - 50)
+                        end_context = min(len(debug_text), match.end() + 50)
+                        context = debug_text[start_context:end_context].replace('\n', ' ')
+                        
+                        debug_info["detailed_pattern_matches"][pattern_name].append({
+                            'matched': match.group(0),
+                            'context': context,
+                            'position': match.start()
+                        })
+                    
+                    # 첫 번째 매치 주변 텍스트도 유지
                     if matches:
-                        # 첫 번째 매치 주변 텍스트 (앞뒤 500자씩)
                         first_match = matches[0]
                         start = max(0, first_match.start() - 200)
                         end = min(len(debug_text), first_match.end() + 1000)
