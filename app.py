@@ -490,31 +490,54 @@ def get_billing_month(text):
     return "날짜모름"
 
 def parse_invoice_data(text):
-    """PDF 텍스트에서 청구 데이터를 파싱합니다. (전면 개선된 버전)"""
+    """PDF 텍스트에서 청구 데이터를 파싱합니다. (단순하고 확실한 버전)"""
     parsed_data = []
     
-    # 개별 전화번호 항목들을 "합계 XXX원" 기준으로 분리
-    # 각 전화번호는 "합계 숫자원"으로 끝남
-    entries = re.split(r'합계\s+([\d,]+)\s*원', text)
+    print("=== PDF 파싱 시작 ===")
+    print(f"입력 텍스트 길이: {len(text)} 문자")
     
-    # entries[0]은 헤더, 그 이후로 (내용, 합계금액, 내용, 합계금액, ...) 순서
-    for i in range(1, len(entries), 2):
-        if i + 1 < len(entries):
-            final_amount_str = entries[i].replace(',', '')
-            content = entries[i + 1] if i + 1 < len(entries) else ''
+    # 전체 텍스트에서 전화번호와 합계 금액을 직접 추출
+    # 각 전화번호 패턴과 그 뒤의 합계 금액을 찾음
+    
+    # 전화번호 패턴들 (PDF에서 실제 나타나는 형태)
+    phone_patterns = [
+        r'\*\*(\d{2}-\d{4})',           # **99-2593, **00-1631 (전국대표번호)
+        r'070\)\*\*(\d{2}-\d{4})',      # 070)**03-2573 (070번호)
+        r'02\)\*\*(\d{2}-\d{4})',       # 02)**35-6493 (02번호)
+        r'080\)\*\*(\d{1}-\d{4})',      # 080)**0-7100 (080번호)
+    ]
+    
+    # 각 패턴별로 전화번호를 찾고 데이터를 추출
+    for pattern in phone_patterns:
+        matches = re.finditer(pattern, text)
+        
+        for match in matches:
+            phone_number = match.group(0)  # 전체 매칭된 문자열
+            print(f"발견된 전화번호: {phone_number}")
             
-            # 전화번호 추출 (개선된 패턴)
-            phone_number = extract_phone_number_from_content(content + f" 합계 {entries[i]}원")
+            # 전화번호 위치에서 그 뒤의 텍스트를 가져와서 합계 금액 찾기
+            start_pos = match.end()
+            remaining_text = text[start_pos:start_pos + 2000]  # 전화번호 뒤 2000자
             
-            if phone_number:
-                # 금액 정보 추출
-                amounts = extract_amounts_from_content(content + f" 합계 {entries[i]}원")
-                amounts['최종합계'] = int(final_amount_str) if final_amount_str.isdigit() else 0
+            # 해당 전화번호의 합계 금액 찾기 (가장 가까운 "합계 XXX원")
+            total_match = re.search(r'합계\s+([\d,]+)\s*원', remaining_text)
+            
+            if total_match:
+                total_amount = int(total_match.group(1).replace(',', ''))
+                print(f"  → 합계: {total_amount}원")
+                
+                # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
+                detail_text = remaining_text[:total_match.end()]
+                amounts = extract_amounts_from_content(detail_text)
+                amounts['최종합계'] = total_amount
                 amounts['전화번호'] = phone_number
                 
                 parsed_data.append(amounts)
-                print(f"추출된 전화번호: {phone_number}, 최종합계: {amounts['최종합계']}원")
+                print(f"  → 파싱 완료: {phone_number} ({total_amount}원)")
+            else:
+                print(f"  → 합계 금액 찾을 수 없음")
     
+    print(f"=== 파싱 완료: 총 {len(parsed_data)}개 전화번호 추출 ===")
     return parsed_data
 
 def extract_phone_number_from_content(content):
