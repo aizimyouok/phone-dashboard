@@ -119,10 +119,48 @@ def update_spreadsheet(master_ws, data_ws, invoice_data, billing_month):
     print(f"   실패: {unmatched_count}건")
     print(f"   전체: {len(invoice_data)}건")
         
-    # 3. 구글 시트에 데이터를 한 번에 추가합니다.
+    # 3. 구글 시트에 데이터를 배치별로 추가합니다. (API 제한 해결)
     if rows_to_append:
-        data_ws.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-        print(f"{len(rows_to_append)}개의 행을 '청구내역 원본' 시트에 성공적으로 추가했습니다.")
+        import time
+        
+        # 배치 크기 설정 (한번에 최대 20행씩 업로드)
+        BATCH_SIZE = 20
+        DELAY_SECONDS = 2  # 배치 간 2초 대기
+        
+        total_rows = len(rows_to_append)
+        uploaded_count = 0
+        
+        print(f"총 {total_rows}개의 행을 배치별로 업로드 시작... (배치크기: {BATCH_SIZE})")
+        
+        # 배치별로 나누어 업로드
+        for i in range(0, total_rows, BATCH_SIZE):
+            batch = rows_to_append[i:i + BATCH_SIZE]
+            batch_num = (i // BATCH_SIZE) + 1
+            
+            try:
+                data_ws.append_rows(batch, value_input_option='USER_ENTERED')
+                uploaded_count += len(batch)
+                print(f"배치 {batch_num}: {len(batch)}개 행 업로드 완료 ({uploaded_count}/{total_rows})")
+                
+                # 마지막 배치가 아니면 대기
+                if i + BATCH_SIZE < total_rows:
+                    print(f"다음 배치까지 {DELAY_SECONDS}초 대기...")
+                    time.sleep(DELAY_SECONDS)
+                    
+            except Exception as e:
+                print(f"배치 {batch_num} 업로드 실패: {e}")
+                # 재시도 로직
+                print("10초 후 재시도...")
+                time.sleep(10)
+                try:
+                    data_ws.append_rows(batch, value_input_option='USER_ENTERED')
+                    uploaded_count += len(batch)
+                    print(f"배치 {batch_num} 재시도 성공!")
+                except Exception as retry_e:
+                    print(f"배치 {batch_num} 재시도도 실패: {retry_e}")
+                    continue
+        
+        print(f"업로드 완료: {uploaded_count}/{total_rows}개 행이 '청구내역 원본' 시트에 추가되었습니다.")
     else:
         print("시트에 추가할 데이터가 없습니다.")
         

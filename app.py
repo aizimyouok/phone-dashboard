@@ -423,12 +423,48 @@ class PhoneBillingDashboard:
                 ]
                 rows_to_append.append(row)
             
-            # 구글 시트에 추가
+            # 구글 시트에 배치별로 추가 (API 제한 해결)
             if rows_to_append:
-                self.data_ws.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+                import time
+                
+                # 배치 크기 설정 (한번에 최대 20행씩 업로드)
+                BATCH_SIZE = 20
+                DELAY_SECONDS = 2  # 배치 간 2초 대기
+                
+                total_rows = len(rows_to_append)
+                uploaded_count = 0
+                
+                print(f"총 {total_rows}개의 행을 배치별로 업로드 시작... (배치크기: {BATCH_SIZE})")
+                
+                # 배치별로 나누어 업로드
+                for i in range(0, total_rows, BATCH_SIZE):
+                    batch = rows_to_append[i:i + BATCH_SIZE]
+                    batch_num = (i // BATCH_SIZE) + 1
+                    
+                    try:
+                        self.data_ws.append_rows(batch, value_input_option='USER_ENTERED')
+                        uploaded_count += len(batch)
+                        print(f"배치 {batch_num}: {len(batch)}개 행 업로드 완료 ({uploaded_count}/{total_rows})")
+                        
+                        # 마지막 배치가 아니면 대기
+                        if i + BATCH_SIZE < total_rows:
+                            time.sleep(DELAY_SECONDS)
+                            
+                    except Exception as e:
+                        print(f"배치 {batch_num} 업로드 실패: {e}")
+                        # 재시도 로직
+                        time.sleep(10)
+                        try:
+                            self.data_ws.append_rows(batch, value_input_option='USER_ENTERED')
+                            uploaded_count += len(batch)
+                            print(f"배치 {batch_num} 재시도 성공!")
+                        except Exception as retry_e:
+                            print(f"배치 {batch_num} 재시도도 실패: {retry_e}")
+                            continue
+                
                 return {
                     "success": True, 
-                    "rows_added": len(rows_to_append),
+                    "rows_added": uploaded_count,
                     "overwritten": overwrite and has_duplicates,
                     "duplicates_removed": len(duplicates) if overwrite and has_duplicates else 0
                 }
