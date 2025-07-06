@@ -610,9 +610,9 @@ def parse_invoice_data(text):
                     
                     parsed_data.append(amounts)
                     total_parsed += 1
-                    print(f"  ✅ {pattern_name} {phone_number} 파싱 성공 -> {total_amount:,}원")
+                    print(f"  [성공] {pattern_name} {phone_number} 파싱 성공 -> {total_amount:,}원")
                 else:
-                    print(f"  ❌ {pattern_name} {phone_number} 합계 찾기 실패")
+                    print(f"  [실패] {pattern_name} {phone_number} 합계 찾기 실패")
     
     print(f"\n=== 파싱 완료: 총 {total_parsed}개 전화번호 추출 ===")
     return parsed_data
@@ -1915,51 +1915,22 @@ def prepare_monthly_report_data(df, period, branch):
 # ==================== PDF 처리 함수 ====================
 
 def process_pdf(file_path):
-    """PDF 파일에서 데이터 추출 (기존 main.py 로직 활용)"""
-    import pypdf
-    import re
-    
+    """PDF 파일에서 데이터 추출 (개선된 파싱 로직 사용)"""
     try:
-        # PDF 읽기
-        with open(file_path, 'rb') as pdf_file:
-            reader = pypdf.PdfReader(pdf_file)
-            full_text = "".join(page.extract_text() for page in reader.pages)
+        # PDF 텍스트 읽기
+        pdf_text = read_pdf(file_path)
+        if not pdf_text:
+            return None, None
         
-        # 청구월 추출
-        billing_month_match = re.search(r'(\d{4})년\s*(\d{2})월', full_text)
-        billing_month = f"{billing_month_match.group(1)}-{billing_month_match.group(2)}" if billing_month_match else "날짜모름"
+        # 개선된 파싱 함수 사용
+        invoice_data = parse_invoice_data(pdf_text)
+        billing_month = get_billing_month(pdf_text)
         
-        # 데이터 파싱
-        blocks = re.split(r'유선전화', full_text)
-        parsed_data = []
+        print(f"PDF 파싱 결과:")
+        print(f"   청구월: {billing_month}")
+        print(f"   추출된 회선 수: {len(invoice_data)}")
         
-        for block in blocks[1:]:
-            phone_match = re.search(r'070\)\*\*(\d{2}-\d{4})', block)
-            if not phone_match:
-                continue
-            
-            phone_number = f"070-XX{phone_match.group(1)}"
-            
-            def find_amount(pattern):
-                match = re.search(pattern, block)
-                return int(match.group(1).replace(',', '')) if match else 0
-            
-            data = {
-                '전화번호': phone_number,
-                '기본료': find_amount(r'인터넷전화기본료\s+([\d,]+)'),
-                '시내통화료': find_amount(r'시내통화료\s+([\d,]+)'),
-                '이동통화료': find_amount(r'이동통화료\s+([\d,]+)'),
-                '070통화료': find_amount(r'인터넷전화통화료\(070\)\s+([\d,]+)'),
-                '정보통화료': find_amount(r'정보통화료\s+([\d,]+)'),
-                '부가서비스료': find_amount(r'부가서비스이용료\s+([\d,]+)'),
-                '사용요금계': find_amount(r'사용요금 계\s+([\d,]+)'),
-                '할인액': find_amount(r'할인\s+-([\d,]+)'),
-                '부가세': find_amount(r'부가가치세\(세금\)\*\s+([\d,]+)'),
-                '최종합계': find_amount(r'합계\s+([\d,]+)')
-            }
-            parsed_data.append(data)
-            
-        return parsed_data, billing_month
+        return invoice_data, billing_month
         
     except Exception as e:
         print(f"PDF 처리 오류: {e}")
