@@ -414,11 +414,8 @@ class PhoneBillingDashboard:
                             full_phone_number = master_phone
                             break
                 
-                # PDF 전화번호가 **로 시작하면 070-XX 형태로 변환해서 저장
-                if pdf_phone_number.startswith('**'):
-                    display_phone_number = f"070-XX{pdf_phone_number[2:]}"
-                else:
-                    display_phone_number = pdf_phone_number
+                # 전화번호 종류 구분하여 원본 형태 유지
+                display_phone_number = pdf_phone_number  # 원본 형태 그대로 유지
                 
                 # 새로운 열 구조에 맞게 데이터 배열 (전화번호, 사용자 순서)
                 row = [
@@ -506,12 +503,12 @@ def parse_invoice_data(text):
     # 텍스트를 라인별로 분리
     lines = text.split('\n')
     
-    # 전화번호 패턴들 (단순한 패턴 우선)
+    # 전화번호 패턴들 (구체적인 패턴을 먼저 처리)
     phone_patterns = [
-        (r'\*\*\d{2}-\d{4}', '전국대표번호'),  # **95-3192 (가장 단순한 패턴 먼저)
-        (r'070\)\*\*\d{2}-\d{4}', '070번호'),
-        (r'02\)\*\*\d{2}-\d{4}', '02번호'),  
-        (r'080\)\*\*\d{1}-\d{4}', '080번호'),
+        (r'070\)\*\*\d{2}-\d{4}', '070번호'),      # 070)**03-2575 
+        (r'02\)\*\*\d{2}-\d{4}', '02번호'),       # 02)**35-6493
+        (r'080\)\*\*\d{1}-\d{4}', '080번호'),      # 080)**0-7100
+        (r'\*\*\d{2}-\d{4}', '전국대표번호'),        # **99-2593 (가장 마지막)
     ]
     
     total_parsed = 0
