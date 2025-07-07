@@ -179,7 +179,7 @@ def get_billing_month(text):
 def parse_invoice_data(text):
     """PDF 텍스트에서 청구 데이터를 파싱합니다. (중복 제거 및 개선된 버전)"""
     parsed_data = []
-    processed_suffixes = set()  # 중복 방지를 위한 세트
+    processed_full_numbers = set()  # 🔑 핵심 수정: 전체 전화번호로 중복 체크 (뒷자리가 아닌!)
     
     print("=== PDF 파싱 시작 (중복 제거 버전) ===")
     print(f"입력 텍스트 길이: {len(text)} 문자")
@@ -206,20 +206,10 @@ def parse_invoice_data(text):
         for i, match in enumerate(matches):
             phone_number = match.group(0)
             
-            # 뒷자리 추출로 중복 체크
-            suffix = None
-            if pattern_name == '070번호':
-                suffix = phone_number.replace('070)**', '')  # 03-2573
-            elif pattern_name == '02번호':
-                suffix = phone_number.replace('02)**', '')   # 35-6493
-            elif pattern_name == '080번호':
-                suffix = phone_number.replace('080)**', '')  # 0-7100
-            elif pattern_name == '전국대표번호':
-                suffix = phone_number.replace('**', '')      # 99-2593
-            
-            # 중복 체크
-            if suffix in processed_suffixes:
+            # 🔑 핵심 수정: 전체 전화번호로 중복 체크 (뒷자리가 아닌!)
+            if phone_number in processed_full_numbers:
                 pattern_skipped += 1
+                print(f"  중복 제외: {phone_number}")
                 continue
             
             # 전화번호 위치에서 그 뒤의 텍스트를 가져와서 합계 금액 찾기
@@ -244,8 +234,8 @@ def parse_invoice_data(text):
                     if total_match:
                         total_amount = int(total_match.group(1).replace(',', ''))
                         
-                        # 중복 방지를 위해 뒷자리 기록
-                        processed_suffixes.add(suffix)
+                        # 🔑 핵심 수정: 전체 번호로 중복 방지
+                        processed_full_numbers.add(phone_number)
                         
                         # 전화번호와 합계 사이의 텍스트에서 세부 금액 추출
                         detail_text = remaining_text[:total_match.end()]
@@ -256,6 +246,7 @@ def parse_invoice_data(text):
                         parsed_data.append(amounts)
                         pattern_parsed += 1
                         total_parsed += 1
+                        print(f"  추가됨: {phone_number} - {total_amount:,}원")
                         total_found = True
                         break
                 
